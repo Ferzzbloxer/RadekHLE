@@ -334,13 +334,14 @@ pub fn pthread_create(
     State::get(env)
         .threads
         .insert(opaque, ThreadHostObject::new(thread_id, attr));
+    let stack_size = unsafe { std::ptr::addr_of!(attr.stacksize).read_unaligned() };
     log!(
         "pthread_create: bundle={} thread_id={} routine={:?} arg={:?} stack_size={}",
         env.bundle.bundle_identifier(),
         thread_id,
         start_routine,
         user_data,
-        attr.stacksize
+        stack_size
     );
     log_dbg!(
         "pthread_create({:?}, {:?}, {:?}, {:?}) => 0, pthread_t={:?} thread_id={}",
