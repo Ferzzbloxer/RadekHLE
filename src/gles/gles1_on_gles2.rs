@@ -391,6 +391,7 @@ impl GLESContext for GLES1OnGLES2Context {
     }
 
     fn new(window: &mut Window) -> Result<Self, String> {
+        gles1_on_gles2_logging::instrument_rendering_pipeline();
         gles1_on_gles2_logging::log_initialization(rotation_fix_mode().as_str());
         let mut state = TranslatorState::new();
         state.render_rotation = window.render_rotation();
@@ -907,6 +908,9 @@ impl GLES for GLES1OnGLES2<'_> {
         *params = float_to_fixed(value);
     }
     unsafe fn Enable(&mut self, cap: GLenum) {
+        if cap == es1::SCISSOR_TEST {
+            crate::gles::gles1_on_gles2_logging::update_scissor_test_enabled(true);
+        }
         if cap == es1::COLOR_LOGIC_OP {
             self.state.logic_op_enabled = true;
         } else if cap == es1::TEXTURE_2D {
@@ -932,6 +936,9 @@ impl GLES for GLES1OnGLES2<'_> {
         }
     }
     unsafe fn Disable(&mut self, cap: GLenum) {
+        if cap == es1::SCISSOR_TEST {
+            crate::gles::gles1_on_gles2_logging::update_scissor_test_enabled(false);
+        }
         if cap == es1::COLOR_LOGIC_OP {
             self.state.logic_op_enabled = false;
         } else if cap == es1::TEXTURE_2D {
@@ -1430,6 +1437,9 @@ impl GLES for GLES1OnGLES2<'_> {
         self.state.matrix_mut().current = values;
         log_matrix_operation("glLoadMatrixf", format!("mode={}", matrix_mode_name(self.state.matrix_mode)));
         log_matrix_result("glLoadMatrixf", &values);
+        if self.state.matrix_mode == es1::PROJECTION {
+            crate::gles::gles1_on_gles2_logging::log_projection_matrix("glLoadMatrixf", &values);
+        }
         logger.log_matrix("result", &values, false);
         logger.finish();
     }
@@ -1451,6 +1461,9 @@ impl GLES for GLES1OnGLES2<'_> {
         log_matrix("glMultMatrixf input", &b);
         let current = self.state.matrix_mut().current;
         log_matrix_result("glMultMatrixf", &current);
+        if self.state.matrix_mode == es1::PROJECTION {
+            crate::gles::gles1_on_gles2_logging::log_projection_matrix("glMultMatrixf", &current);
+        }
         logger.log_matrix("input", &b, true);
         logger.log_matrix("result", &current, false);
         logger.finish();
@@ -1570,6 +1583,10 @@ impl GLES for GLES1OnGLES2<'_> {
         crate::gles::gles1_on_gles2_logging::trace_viewport_usage("glViewport entry");
         let (x, y, w, h) = apply_viewport(x, y, w, h);
         crate::gles::gles1_on_gles2_logging::update_viewport_state((x, y, w, h));
+        let synced_scissor = crate::gles::gles1_on_gles2_logging::sync_scissor_to_viewport();
+        if let Some((scissor_x, scissor_y, scissor_w, scissor_h)) = synced_scissor {
+            gl::Scissor(scissor_x, scissor_y, scissor_w, scissor_h);
+        }
         logger.log_viewport(requested_x, requested_y, requested_w.max(0) as u32, requested_h.max(0) as u32, Some((x, y, w.max(0) as u32, h.max(0) as u32)));
         if !self.state.first_viewport_logged {
             log!("[GLES1→GLES2 VIEWPORT FIX] version={} requested=({}, {}, {}, {}) applied=({}, {}, {}, {}) actual_window={}x{}", VIEWPORT_FIX_VERSION, requested_x, requested_y, requested_w, requested_h, x, y, w, h, self.state.actual_window_size.0, self.state.actual_window_size.1);
@@ -1811,10 +1828,32 @@ impl GLES for GLES1OnGLES2<'_> {
         self.bind_array_range(ATTR_POINT_SIZE, &point_size_array, first, count);
         if coordinate_trace_enabled() && position.enabled && position.buffer_binding == 0 && !position.pointer.is_null() {
             let components = position.size.max(1) as usize;
-            let first_offset = (first.max(0) as usize).saturating_mul(if position.stride > 0 { position.stride as usize } else { components * std::mem::size_of::<GLfloat>() });
-            let raw = (position.pointer as *const u8).add(first_offset) as *const GLfloat;
-            let vertex = [raw.read_unaligned(), if components > 1 { raw.add(1).read_unaligned() } else { 0.0 }, if components > 2 { raw.add(2).read_unaligned() } else { 0.0 }];
-            log_vertex_transformation(vertex, transform_vec4(&mvp, [vertex[0], vertex[1], vertex[2], 1.0]));
+            let stride_bytes = if position.stride > 0 {
+                position.stride as usize
+            } else {
+                components * std::mem::size_of::<GLfloat>()
+            };
+            let sample_count = (count.max(0) as usize).min(5);
+            let mut vertices = Vec::with_capacity(sample_count);
+            for index in 0..sample_count {
+                let raw = (position.pointer as *const u8)
+                    .add((first.max(0) as usize + index) * stride_bytes)
+                    as *const GLfloat;
+                vertices.push([
+                    raw.read_unaligned(),
+                    if components > 1 { raw.add(1).read_unaligned() } else { 0.0 },
+                    if components > 2 { raw.add(2).read_unaligned() } else { 0.0 },
+                ]);
+            }
+            let logger = GLES1to2Logger::new("glDrawArrays", "vertex coordinates");
+            logger.log_vertex_batch("first_vertices", &vertices, vertices.len());
+            for vertex in vertices {
+                logger.log_vertex_transformation(
+                    vertex,
+                    transform_vec4(&mvp, [vertex[0], vertex[1], vertex[2], 1.0]),
+                );
+            }
+            logger.finish();
         }
         crate::gles::gles1_on_gles2_logging::trace_viewport_usage("before rendering DrawArrays");
         gl::DrawArrays(mode, first, count);

@@ -4,6 +4,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
 static INITIALIZATION_LOGGED: AtomicBool = AtomicBool::new(false);
+static INSTRUMENTATION_BANNER_LOGGED: AtomicBool = AtomicBool::new(false);
 
 pub(crate) fn enabled() -> bool {
     crate::gles::translator_tracing_enabled()
@@ -264,6 +265,12 @@ pub fn log_initialization(rotation_mode: &str) {
     );
 }
 
+pub fn instrument_rendering_pipeline() {
+    if enabled() && !INSTRUMENTATION_BANNER_LOGGED.swap(true, Ordering::Relaxed) {
+        log!("[RENDERING PIPELINE INSTRUMENTATION] viewport, scissor, projection matrices, vertex samples, coordinate transformations, and texture uploads are enabled");
+    }
+}
+
 fn aspect(width: u32, height: u32) -> f32 {
     if height == 0 {
         0.0
@@ -300,6 +307,9 @@ fn determinant(matrix: &[f32; 16]) -> f32 {
 struct ViewportStateGlobal {
     current_viewport: (i32, i32, i32, i32),
     current_scissor: (i32, i32, i32, i32),
+    scissor_test_enabled: bool,
+    logical_size: (u32, u32),
+    drawable_size: (u32, u32),
     last_updated: Instant,
 }
 
@@ -310,6 +320,9 @@ fn viewport_state() -> &'static Mutex<ViewportStateGlobal> {
     VIEWPORT_STATE_GLOBAL.get_or_init(|| Mutex::new(ViewportStateGlobal {
         current_viewport: (0, 0, 0, 0),
         current_scissor: (0, 0, 0, 0),
+        scissor_test_enabled: false,
+        logical_size: (480, 320),
+        drawable_size: (0, 0),
         last_updated: Instant::now(),
     }))
 }
@@ -339,12 +352,72 @@ pub fn update_scissor_state(scissor: (i32, i32, i32, i32)) {
     state.last_updated = Instant::now();
 }
 
+pub fn set_scissor_test_enabled(enabled: bool) {
+    let mut state = viewport_state().lock().unwrap();
+    state.scissor_test_enabled = enabled;
+}
+
+pub fn update_scissor_test_enabled(enabled: bool) {
+    let mut state = viewport_state().lock().unwrap();
+    state.scissor_test_enabled = enabled;
+}
+
+pub fn sync_scissor_to_viewport() -> Option<(i32, i32, i32, i32)> {
+    let mut state = viewport_state().lock().unwrap();
+    if !state.scissor_test_enabled || state.current_scissor != (0, 0, 0, 0) {
+        return None;
+    }
+    state.current_scissor = state.current_viewport;
+    let viewport = state.current_viewport;
+    drop(state);
+    log!("[VIEWPORT→SCISSOR SYNC] scissor=({},{},{},{})", viewport.0, viewport.1, viewport.2, viewport.3);
+    Some(viewport)
+}
+
+pub fn log_coordinate_transformation_stack(label: &str) {
+    if !enabled() {
+        return;
+    }
+    let state = viewport_state().lock().unwrap();
+    let (x, y, width, height) = state.current_viewport;
+    let (scissor_x, scissor_y, scissor_width, scissor_height) = state.current_scissor;
+    log!("[COORDINATE PIPELINE] label={} game_space={}x{} viewport=({},{},{},{}) scissor=({},{},{},{}) drawable={}x{} scale=({:.6},{:.6})", label, state.logical_size.0, state.logical_size.1, x, y, width, height, scissor_x, scissor_y, scissor_width, scissor_height, state.drawable_size.0, state.drawable_size.1, width as f32 / state.logical_size.0.max(1) as f32, height as f32 / state.logical_size.1.max(1) as f32);
+}
+
+pub fn log_projection_matrix(label: &str, matrix: &[f32; 16]) {
+    if !enabled() {
+        return;
+    }
+    let is_ortho = (matrix[15] - 1.0).abs() < f32::EPSILON;
+    let is_perspective = (matrix[11].abs() - 1.0).abs() < f32::EPSILON;
+    let kind = if is_ortho { "ORTHOGRAPHIC" } else if is_perspective { "PERSPECTIVE" } else { "UNKNOWN" };
+    log!("[PROJECTION MATRIX] label={} type={} determinant={:.6}", label, kind, determinant(matrix));
+    for row in 0..4 {
+        log!("[PROJECTION MATRIX] label={} row={} values=({:.6},{:.6},{:.6},{:.6})", label, row, matrix[row], matrix[row + 4], matrix[row + 8], matrix[row + 12]);
+    }
+    if is_ortho && matrix[0] != 0.0 && matrix[5] != 0.0 && matrix[10] != 0.0 {
+        let left = (matrix[12] + 1.0) / matrix[0];
+        let right = (matrix[12] - 1.0) / matrix[0];
+        let bottom = (matrix[13] + 1.0) / matrix[5];
+        let top = (matrix[13] - 1.0) / matrix[5];
+        let near = (matrix[14] + 1.0) / matrix[10];
+        let far = (matrix[14] - 1.0) / matrix[10];
+        log!("[PROJECTION MATRIX] label={} bounds=left:{:.4},right:{:.4},bottom:{:.4},top:{:.4},near:{:.4},far:{:.4}", label, left, right, bottom, top, near, far);
+    }
+}
+
 pub fn trace_viewport_usage(label: &str) {
     if !enabled() {
         return;
     }
     let state = viewport_state().lock().unwrap();
-    log!("[VIEWPORT TRACE] {}: current=({},{},{},{})", label, state.current_viewport.0, state.current_viewport.1, state.current_viewport.2, state.current_viewport.3);
+    let (x, y, width, height) = state.current_viewport;
+    let (sx, sy, sw, sh) = state.current_scissor;
+    let logical = state.logical_size;
+    let drawable = state.drawable_size;
+    let scale_x = width as f32 / logical.0.max(1) as f32;
+    let scale_y = height as f32 / logical.1.max(1) as f32;
+    log!("[COORDINATE PIPELINE] {} game_space={}x{} viewport=({},{},{},{}) scissor=({},{},{},{}) drawable={}x{} scale=({:.6},{:.6}) non_uniform={}", label, logical.0, logical.1, x, y, width, height, sx, sy, sw, sh, drawable.0, drawable.1, scale_x, scale_y, (scale_x - scale_y).abs() > 0.01);
 }
 
 pub fn verify_viewport_state_in_gpu() {
@@ -361,6 +434,8 @@ pub fn log_window_state(orientation: &str, logical: (u32, u32), drawable: (u32, 
         return;
     }
     let count = WINDOW_LOG_COUNT.fetch_add(1, Ordering::SeqCst);
-    let state = viewport_state().lock().unwrap();
+    let mut state = viewport_state().lock().unwrap();
+    state.logical_size = logical;
+    state.drawable_size = drawable;
     log!("[GLES1→GLES2 WINDOW #{:06}] orientation={} logical_framebuffer={}x{} drawable={}x{} viewport=({},{},{},{}) scissor=({},{},{},{}) age_ms={}", count, orientation, logical.0, logical.1, drawable.0, drawable.1, state.current_viewport.0, state.current_viewport.1, state.current_viewport.2, state.current_viewport.3, state.current_scissor.0, state.current_scissor.1, state.current_scissor.2, state.current_scissor.3, state.last_updated.elapsed().as_millis());
 }

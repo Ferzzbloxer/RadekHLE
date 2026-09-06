@@ -270,6 +270,16 @@ pub fn main<T: Iterator<Item = String>>(mut args: T) -> Result<(), String> {
             std::env::set_var("TOUCHHLE_TOUCH_MODE", "right");
         }
         std::env::remove_var("TOUCHHLE_TOUCH_LOCATION_X_OFFSET");
+
+        if app_id == "com.robtop.geometryjump" && cfg!(target_os = "android") {
+            unsafe {
+                std::env::set_var("TOUCHHLE_FORCE_LANDSCAPE_VIEWPORT", "1");
+                std::env::set_var("TOUCHHLE_FORCE_LANDSCAPE_RENDERBUFFER", "1");
+                std::env::set_var("TOUCHHLE_FORCE_LANDSCAPE_VIEW_BOUNDS", "1");
+                std::env::set_var("TOUCHHLE_PRESENT_STRETCH_TO_VIEWPORT", "1");
+            }
+        }
+
         std::env::remove_var("TOUCHHLE_TOUCH_LOCATION_Y_OFFSET");
         std::env::remove_var("TOUCHHLE_PRESENT_STRETCH_TO_VIEWPORT");
         std::env::remove_var("TOUCHHLE_POTATO_ANDROID_THUMB2_COMPAT");
