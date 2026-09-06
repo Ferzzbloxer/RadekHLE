@@ -71,9 +71,34 @@ impl ResourceFile {
             #[cfg(not(target_os = "android"))]
             file: {
                 let base_path = get_macos_bundled_resources_path();
-                // When not in a bundle, look in the current directory.
-                let path = base_path.as_deref().unwrap_or(Path::new(".")).join(path);
-                std::fs::File::open(path).map_err(|e| e.to_string())?
+                let current_dir = base_path
+                    .as_deref()
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|| PathBuf::from("."));
+                let executable_dir = std::env::current_exe()
+                    .ok()
+                    .and_then(|path| path.parent().map(Path::to_path_buf));
+                let mut candidates = vec![
+                    current_dir.join(path),
+                    current_dir.join("res").join(path),
+                    current_dir.join("resources").join(path),
+                ];
+                if let Some(executable_dir) = executable_dir {
+                    candidates.push(executable_dir.join(path));
+                    candidates.push(executable_dir.join("res").join(path));
+                    candidates.push(executable_dir.join("resources").join(path));
+                }
+                let mut opened = None;
+                for candidate in candidates {
+                    match std::fs::File::open(&candidate) {
+                        Ok(file) => {
+                            opened = Some(file);
+                            break;
+                        }
+                        Err(_) => {}
+                    }
+                }
+                opened.ok_or_else(|| format!("resource not found: {path}"))?
             },
         })
     }

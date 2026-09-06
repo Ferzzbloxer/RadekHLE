@@ -15,6 +15,7 @@ if [[ $# == 1 ]]; then
     cp -r ../touchHLE_dylibs radekhle_windows_bundle/
     cp -r ../touchHLE_fonts radekhle_windows_bundle/
     cp -r ../touchHLE_default_options.txt radekhle_windows_bundle/
+    cp -r ../res/RadekHLE_wallpaper.png radekhle_windows_bundle/
 else
     echo "Incorrect usage."
     exit 1
