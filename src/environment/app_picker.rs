@@ -789,7 +789,7 @@ fn app_picker_inner(
         let text = ns_string::from_rust_string(
             env,
             format!(
-                "RadekHLE 5.0 {}{}{}",
+                "RadekHLE 6.0 {}{}{}",
                 crate::branding(),
                 if crate::branding().is_empty() {
                     ""
@@ -2440,7 +2440,7 @@ fn setup_quick_options(
         origin: CGPoint { x: 0.0, y: 0.0 },
         size: app_frame.size,
     };
-    let content_height = app_frame.size.height.max(2400.0);
+    let content_height = app_frame.size.height.max(2700.0);
     let main_frame = CGRect {
         origin: CGPoint { x: 0.0, y: 0.0 },
         size: CGSize {

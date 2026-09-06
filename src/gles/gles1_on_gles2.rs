@@ -1339,8 +1339,22 @@ impl GLES for GLES1OnGLES2<'_> {
         gl::DisableVertexAttribArray(ATTR_POSITION);
         gl::DisableVertexAttribArray(ATTR_TEX0);
     }
-    unsafe fn TexImage2D(&mut self, target: GLenum, level: GLint, internalformat: GLint, width: GLsizei, height: GLsizei, border: GLint, format: GLenum, type_: GLenum, pixels: *const GLvoid) { gl::TexImage2D(target, level, internalformat, width, height, border, format, type_, pixels); }
-    unsafe fn TexSubImage2D(&mut self, target: GLenum, level: GLint, x: GLint, y: GLint, width: GLsizei, height: GLsizei, format: GLenum, type_: GLenum, pixels: *const GLvoid) { gl::TexSubImage2D(target, level, x, y, width, height, format, type_, pixels); }
+    unsafe fn TexImage2D(&mut self, target: GLenum, level: GLint, internalformat: GLint, width: GLsizei, height: GLsizei, border: GLint, format: GLenum, type_: GLenum, pixels: *const GLvoid) {
+        let logger = GLES1to2Logger::new("glTexImage2D", "texture upload");
+        logger.log_stage("INPUT", &format!("target=0x{:x} level={} internalformat=0x{:x} size={}x{} format=0x{:x} type=0x{:x}", target, level, internalformat, width, height, format, type_));
+        gl::TexImage2D(target, level, internalformat, width, height, border, format, type_, pixels);
+        logger.log_stage("BACKEND", "OpenGL glTexImage2D completed");
+        logger.log_error(gl::GetError());
+        logger.finish();
+    }
+    unsafe fn TexSubImage2D(&mut self, target: GLenum, level: GLint, x: GLint, y: GLint, width: GLsizei, height: GLsizei, format: GLenum, type_: GLenum, pixels: *const GLvoid) {
+        let logger = GLES1to2Logger::new("glTexSubImage2D", "texture upload");
+        logger.log_stage("INPUT", &format!("target=0x{target:x} level={level} rect=({x},{y},{width},{height}) format=0x{format:x} type=0x{type_:x}"));
+        gl::TexSubImage2D(target, level, x, y, width, height, format, type_, pixels);
+        logger.log_stage("BACKEND", "glTexSubImage2D completed");
+        logger.log_error(gl::GetError());
+        logger.finish();
+    }
     unsafe fn CompressedTexSubImage2D(&mut self, target: GLenum, level: GLint, x: GLint, y: GLint, width: GLsizei, height: GLsizei, format: GLenum, image_size: GLsizei, data: *const GLvoid) { gl::CompressedTexSubImage2D(target, level, x, y, width, height, format, image_size, data); }
     unsafe fn GetBufferParameteriv(&mut self, target: GLenum, pname: GLenum, params: *mut GLint) { if !params.is_null() { gl::GetBufferParameteriv(target, pname, params); } }
     unsafe fn MapBufferOES(&mut self, target: GLenum, _access: GLenum) -> *mut GLvoid {
@@ -1588,7 +1602,14 @@ impl GLES for GLES1OnGLES2<'_> {
         gl::Viewport(x, y, w, h);
         logger.finish();
     }
-    unsafe fn Scissor(&mut self, x: GLint, y: GLint, w: GLsizei, h: GLsizei) { gl::Scissor(x, y, w, h); }
+    unsafe fn Scissor(&mut self, x: GLint, y: GLint, w: GLsizei, h: GLsizei) {
+        let logger = GLES1to2Logger::new("glScissor", "scissor state");
+        logger.log_stage("INPUT", &format!("rect=({}, {}, {}, {})", x, y, w, h));
+        gl::Scissor(x, y, w, h);
+        logger.log_stage("BACKEND", "OpenGL glScissor completed");
+        logger.log_error(gl::GetError());
+        logger.finish();
+    }
     unsafe fn Clear(&mut self, mask: GLbitfield) { gl::Clear(mask); }
     unsafe fn ClearColor(&mut self, r: GLclampf, g: GLclampf, b: GLclampf, a: GLclampf) { gl::ClearColor(r, g, b, a); }
     unsafe fn ClearColorx(&mut self, r: GLclampx, g: GLclampx, b: GLclampx, a: GLclampx) { self.ClearColor(fixed_to_float(r), fixed_to_float(g), fixed_to_float(b), fixed_to_float(a)); }

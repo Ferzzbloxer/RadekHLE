@@ -903,27 +903,6 @@ impl Mem {
         ptr
     }
 
-    /// Implements Apple's documented `malloc_size(3)` contract: returns the
-    /// size of the memory block that backs the allocation pointed to by
-    /// `ptr`, or `0` if `ptr` is `NULL` or doesn't belong to any block
-    /// allocated through malloc. This is deliberately a *silent* lookup —
-    /// it's perfectly normal for apps to call `malloc_size` on arbitrary
-    /// pointers (interior pointers, `__DATA` symbols, stack addresses,
-    /// etc.) and treat a `0` result as "this isn't a heap allocation",
-    /// so we must not flood the log when it happens. See
-    /// <https://developer.apple.com/library/archive/documentation/Performance/Conceptual/ManagingMemory/Articles/MallocDebug.html>.
-    pub fn live_allocations(&self) -> Vec<(GuestUSize, GuestUSize)> {
-        self.allocator.live_allocations()
-    }
-
-    pub fn corrupt_byte(&mut self, address: GuestUSize, value: u8) -> bool {
-        if !self.allocator.contains_address(address) {
-            return false;
-        }
-        self.bytes_mut()[address as usize] = value;
-        true
-    }
-
     pub fn malloc_size(&self, ptr: ConstVoidPtr) -> GuestUSize {
         if ptr.is_null() {
             return 0;

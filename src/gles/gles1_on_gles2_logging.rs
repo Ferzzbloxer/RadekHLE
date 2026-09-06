@@ -238,6 +238,18 @@ impl GLES1to2Logger {
             );
         }
     }
+
+    pub fn log_stage(&self, stage: &str, details: &str) {
+        if enabled() {
+            log!("[GLES1→GLES2 PIPELINE] op={} stage={} {}", self.operation_id, stage, details);
+        }
+    }
+
+    pub fn log_error(&self, error: u32) {
+        if enabled() {
+            log!("[GLES1→GLES2 PIPELINE] op={} gl_error=0x{:x}", self.operation_id, error);
+        }
+    }
 }
 
 pub fn log_initialization(rotation_mode: &str) {
@@ -245,7 +257,7 @@ pub fn log_initialization(rotation_mode: &str) {
         return;
     }
     log!(
-        "[GLES1→GLES2 INITIALIZED] rotation_mode={} logging=matrix,vertices,transformations,texture_coordinates,viewport,projection",
+        "[GLES1→GLES2 INITIALIZED] rotation_mode={} logging=matrix,vertices,transformations,texture_coordinates,viewport,scissor,texture_uploads,projection",
         rotation_mode
     );
 }

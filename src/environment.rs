@@ -1483,7 +1483,7 @@ impl Environment {
         let panic_cell = self.panic_cell.clone();
         let mut stepping = false;
         loop {
-            self.rtcs_corruptor.tick(&mut self.mem);
+            self.rtcs_corruptor.tick();
             if stepping {
                 self.remaining_ticks = None;
             } else {
