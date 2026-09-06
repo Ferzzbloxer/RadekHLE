@@ -1203,6 +1203,8 @@ pub struct Window {
     software_presentation: bool,
     display_refresh_rate: f64,
     frame_generation: bool,
+    rtcv: bool,
+    rtcv_frame: u64,
     frame_generation_state: FrameGenerationState,
     wgpu_presentation: Option<WgpuPresentation>,
     internal_gl_ins: Option<Box<dyn GLESContext>>,
@@ -1287,6 +1289,7 @@ impl Window {
         let llvmpipe_active = crate::gles::configure_llvmpipe_fallback(options.llvmpipe_fallback && !custom_driver_active);
         let software_presentation = options.software_rendering || options.software_presentation;
         let frame_generation = options.frame_generation && !software_presentation;
+        let rtcv = options.rtcv;
         if options.frame_generation && software_presentation {
             log!("Frame generation disabled because software presentation cannot use the GPU interpolation path");
         } else if frame_generation {
@@ -1461,6 +1464,8 @@ impl Window {
             software_presentation,
             display_refresh_rate,
             frame_generation,
+            rtcv,
+            rtcv_frame: 0,
             frame_generation_state: FrameGenerationState::default(),
             wgpu_presentation: None,
             internal_gl_ins: None,
@@ -2499,7 +2504,38 @@ impl Window {
         self.display_splash();
     }
 
-    pub fn present_software_frame(&mut self, pixels: Vec<u8>, width: u32, height: u32) {
+    fn apply_rtcv(&mut self, pixels: &mut [u8], width: u32, height: u32) {
+        if !self.rtcv || width < 2 || height < 2 {
+            return;
+        }
+        self.rtcv_frame = self.rtcv_frame.wrapping_add(1);
+        let progress = (self.rtcv_frame as f32 / 1800.0).clamp(0.0, 1.0);
+        let block = (1 + (progress * 18.0) as usize).min(width as usize / 2).max(1);
+        let stride = width as usize * 4;
+        let step = 37 + (self.rtcv_frame as usize % 97);
+        let mut index = (self.rtcv_frame as usize * 7919) % (width as usize * height as usize);
+        let affected = ((width as usize * height as usize) as f32 * (0.002 + progress * 0.09)) as usize;
+        for _ in 0..affected.max(1) {
+            let x = (index % width as usize) / block * block;
+            let y = (index / width as usize) / block * block;
+            let x_end = (x + block).min(width as usize);
+            let y_end = (y + block).min(height as usize);
+            let source = (y * stride + x * 4).min(pixels.len().saturating_sub(4));
+            let rgba = [pixels[source], pixels[source + 1], pixels[source + 2], pixels[source + 3]];
+            for row in y..y_end {
+                for col in x..x_end {
+                    let dst = row * stride + col * 4;
+                    if dst + 3 < pixels.len() {
+                        pixels[dst..dst + 4].copy_from_slice(&rgba);
+                    }
+                }
+            }
+            index = index.wrapping_add(step) % (width as usize * height as usize);
+        }
+    }
+
+    pub fn present_software_frame(&mut self, mut pixels: Vec<u8>, width: u32, height: u32) {
+        self.apply_rtcv(&mut pixels, width, height);
         self.present_frame_with_generation(pixels, width, height, true);
     }
 
@@ -2586,11 +2622,12 @@ impl Window {
 
     pub fn present_native_frame(
         &mut self,
-        pixels: Vec<u8>,
+        mut pixels: Vec<u8>,
         width: u32,
         height: u32,
         bottom_up: bool,
     ) {
+        self.apply_rtcv(&mut pixels, width, height);
         if self.frame_generation {
             if let Some(mut wgpu) = self.wgpu_presentation.take() {
                 let result = wgpu.present_interpolated(
@@ -2602,6 +2639,9 @@ impl Window {
                 );
                 if let Err(error) = result {
                     log!("WGPU frame generation failed; presenting the source frame: {error}");
+                    self.frame_generation = false;
+                    self.frame_generation_state.previous = None;
+                    self.frame_generation_state.last_frame_at = None;
                     if let Err(fallback_error) = wgpu.present_pixels(&pixels, width, height, bottom_up) {
                         log!("WGPU fallback presentation failed: {fallback_error}");
                     }

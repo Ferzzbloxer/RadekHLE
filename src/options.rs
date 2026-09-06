@@ -236,6 +236,8 @@ pub struct Options {
     pub frame_pacing: bool,
     /// Generate presentation frames up to the host display refresh rate. Disabled by default.
     pub frame_generation: bool,
+    /// Apply a safe, visual-only accelerating corruption effect to presented frames.
+    pub rtcv: bool,
     pub force_composition: bool,
     /// Force EAGL `initWithAPI:` to create an OpenGL ES 2.0 context even when
     /// the app requested an OpenGL ES 1.1 context.
@@ -336,6 +338,7 @@ impl Default for Options {
             fps_limit: None, // Follow the host display; legacy apps can still opt into a fixed cap.
             frame_pacing: true,
             frame_generation: false,
+            rtcv: false,
             force_composition: false,
             prefer_gles2_context: false,
             network_access: false,
@@ -616,6 +619,10 @@ impl Options {
             self.frame_generation = true;
         } else if arg == "--disable-frame-generation" || arg == "--frame-generation=off" {
             self.frame_generation = false;
+        } else if arg == "--rtcv" || arg == "--rtcv=on" {
+            self.rtcv = true;
+        } else if arg == "--disable-rtcv" || arg == "--rtcv=off" {
+            self.rtcv = false;
         } else if let Some(value) = arg.strip_prefix("--fps-limit=") {
             if value == "off" {
                 self.fps_limit = None;

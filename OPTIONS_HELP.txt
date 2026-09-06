@@ -389,6 +389,10 @@ Other options:
     --disable-frame-generation
         Disable display-frame generation.
 
+    --rtcv / --disable-rtcv
+        Enable or disable the safe visual-only accelerating corruption effect.
+        Off by default; it never writes guest memory or changes game logic.
+
     --fps-limit=...
         Modify or disable the framerate (FPS) limit.
 

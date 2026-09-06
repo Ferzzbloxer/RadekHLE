@@ -37,7 +37,6 @@ use crate::options::RenderRotation;
 use crate::window::DeviceOrientation;
 use crate::Environment;
 use std::collections::HashMap;
-use std::ffi::OsStr;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
@@ -255,6 +254,7 @@ struct AppPickerDelegateHostObject {
     revert_y_axis: Option<bool>,
     analog_stick_tilt_controls: Option<bool>,
     network: Option<bool>,
+    rtcv: Option<bool>,
     /// Quick option: show FPS counter (maps to --print-fps)
     show_fps: Option<bool>,
     frame_pacing: Option<bool>,
@@ -419,6 +419,10 @@ const CLASSES: ClassExports = objc_classes! {
 - (())network:(id)switch { // UISwitch*
     let switch_state: bool = msg![env; switch isOn];
     env.objc.borrow_mut::<AppPickerDelegateHostObject>(this).network = Some(switch_state);
+}
+- (())rtcv:(id)switch { // UISwitch*
+    let switch_state: bool = msg![env; switch isOn];
+    env.objc.borrow_mut::<AppPickerDelegateHostObject>(this).rtcv = Some(switch_state);
 }
 - (())showFPS:(id)switch { // UISwitch*
     let switch_state: bool = msg![env; switch isOn];
@@ -883,6 +887,7 @@ fn app_picker_inner(
     let mut quick_options_revert_y_axis = false;
     let mut quick_options_analog_stick_tilt_controls = true;
     let mut quick_options_network = false;
+    let mut quick_options_rtcv = false;
     let mut quick_options_show_fps = true;
     let mut quick_options_frame_pacing = true;
     let mut quick_options_frame_generation = false;
@@ -1427,6 +1432,8 @@ fn app_picker_inner(
             quick_options_analog_stick_tilt_controls = enabled;
         } else if let Some(enabled) = std::mem::take(&mut host_obj.network) {
             quick_options_network = enabled;
+        } else if let Some(enabled) = std::mem::take(&mut host_obj.rtcv) {
+            quick_options_rtcv = enabled;
         } else if let Some(enabled) = std::mem::take(&mut host_obj.show_fps) {
             quick_options_show_fps = enabled;
         } else if let Some(enabled) = std::mem::take(&mut host_obj.angle_driver) {
@@ -1534,6 +1541,7 @@ fn app_picker_inner(
     if quick_options_network {
         option_args.push("--allow-network-access".to_string());
     }
+    option_args.push(if quick_options_rtcv { "--rtcv" } else { "--disable-rtcv" }.to_string());
 
     if quick_options_show_fps {
         option_args.push("--print-fps".to_string());
@@ -2641,6 +2649,8 @@ fn setup_quick_options(
         RowKind::DeviceDropdown,
         RowKind::Label("Network access"),
         RowKind::Switch("network:", false),
+        RowKind::Label("RTCV"),
+        RowKind::Switch("rtcv:", false),
         RowKind::Label("ANGLE driver"),
         RowKind::Switch("angleDriver:", false),
         RowKind::Label("Enable log file"),

@@ -512,6 +512,7 @@ impl WgpuPresentation {
             pass.draw(0..6, 0..1);
         }
         self.queue.submit([encoder.finish()]);
+        self.device.poll(wgpu::Maintain::Wait);
         output.present();
         Ok(())
     }
