@@ -127,6 +127,10 @@ mod collections {
             }
             Some(self.remove_with_base(chunk.base).unwrap())
         }
+
+        pub fn iter(&self) -> impl Iterator<Item = Chunk> + '_ {
+            self.chunks.iter().map(|(&base, &size)| Chunk { base, size })
+        }
         #[inline(always)]
         pub fn get_size_with_base(&self, base: VAddr) -> Option<NonZeroU32> {
             self.chunks.get(&base).copied()
@@ -395,6 +399,14 @@ impl Allocator {
     /// bogus pointers before passing them to the allocator.
     pub fn is_known_allocation(&self, base: VAddr) -> bool {
         self.used_chunks.get_size_with_base(base).is_some()
+    }
+
+    pub fn live_allocations(&self) -> Vec<(VAddr, GuestUSize)> {
+        self.used_chunks.iter().map(|chunk| (chunk.base, chunk.size.get())).collect()
+    }
+
+    pub fn contains_address(&self, address: VAddr) -> bool {
+        self.used_chunks.iter().any(|chunk| chunk.contains(address))
     }
 
     /// Returns the size of the freed chunk so it can be zeroed if desired

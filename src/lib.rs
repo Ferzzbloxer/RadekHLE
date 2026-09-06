@@ -32,6 +32,7 @@ mod abi;
 mod audio;
 mod bundle;
 mod cpu;
+mod corrupt;
 mod debug;
 mod dyld;
 mod environment;
