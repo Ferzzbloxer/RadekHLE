@@ -334,6 +334,14 @@ pub fn pthread_create(
     State::get(env)
         .threads
         .insert(opaque, ThreadHostObject::new(thread_id, attr));
+    log!(
+        "pthread_create: bundle={} thread_id={} routine={:?} arg={:?} stack_size={}",
+        env.bundle.bundle_identifier(),
+        thread_id,
+        start_routine,
+        user_data,
+        attr.stacksize
+    );
     log_dbg!(
         "pthread_create({:?}, {:?}, {:?}, {:?}) => 0, pthread_t={:?} thread_id={}",
         thread,

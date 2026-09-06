@@ -43,6 +43,7 @@ static OPENALMANAGER_INSTANCE_EXISTS: std::sync::atomic::AtomicBool =
 pub struct OpenALManager {}
 impl OpenALManager {
     pub fn new() -> Result<Self, String> {
+        ensure_openal_backend_available();
         if OPENALMANAGER_INSTANCE_EXISTS.swap(true, std::sync::atomic::Ordering::SeqCst) {
             return Err("Only one OpenALManager can exist at a time!".to_string());
         }
@@ -64,7 +65,6 @@ impl OpenALManager {
         // env var is read on the first OpenAL call, so it must be set before
         // any device is opened. We only do this if the user hasn't already
         // chosen a driver explicitly.
-        ensure_openal_backend_available();
         Ok(Self {})
     }
 }
@@ -73,6 +73,13 @@ fn ensure_openal_backend_available() {
     // Respect any user-provided override.
     if std::env::var_os("ALSOFT_DRIVERS").is_some() {
         return;
+    }
+
+    if cfg!(target_os = "linux") && std::env::var_os("TOUCHHLE_PULSE_AUDIO").is_some() {
+        if std::env::var_os("ALSOFT_DRIVERS").is_none() {
+            unsafe { std::env::set_var("ALSOFT_DRIVERS", "pulse,alsa"); }
+            log!("Pulse audio mode enabled: OpenAL Soft backend preference set to pulse,alsa");
+        }
     }
 
     if host_audio_backend_available() {

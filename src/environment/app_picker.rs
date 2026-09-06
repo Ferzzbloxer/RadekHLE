@@ -273,6 +273,7 @@ struct AppPickerDelegateHostObject {
     apps_refresh_requested: bool,
     ios_version_toggle: bool,
     ios_version: Option<Option<(i32, i32, i32)>>,
+    pulse_audio: Option<bool>,
     graphics_api_toggle: bool,
     graphics_api: Option<crate::options::GraphicsApi>,
     arm64_backend: Option<crate::options::Arm64Backend>,
@@ -493,6 +494,10 @@ const CLASSES: ClassExports = objc_classes! {
 - (())iosVersion:(id)sender {
     let tag: NSInteger = msg![env; sender tag];
     env.objc.borrow_mut::<AppPickerDelegateHostObject>(this).ios_version = Some(ios_version_for_tag(tag as i32));
+}
+- (())pulseAudio:(id)switch {
+    let switch_state: bool = msg![env; switch isOn];
+    env.objc.borrow_mut::<AppPickerDelegateHostObject>(this).pulse_audio = Some(switch_state);
 }
 
 - (())arm64Backend:(id)switch {
@@ -742,7 +747,7 @@ fn app_picker_inner(
         break;
     }
     if !found_wallpaper {
-        if let Ok(mut resource) = paths::ResourceFile::open("touchHLE_wallpaper.png") {
+        if let Ok(mut resource) = paths::ResourceFile::open("RadekHLE_wallpaper.png") {
             let mut bytes = Vec::new();
             if resource.get().read_to_end(&mut bytes).is_ok() {
                 if let Ok(image) = Image::from_bytes(&bytes) {
@@ -901,11 +906,12 @@ fn app_picker_inner(
     let mut quick_options_device_model_open = false;
     let mut quick_options_device_model_scroll: isize = 0;
     let mut quick_options_ios_version: Option<(i32, i32, i32)> = None;
+    let mut quick_options_pulse_audio = false;
     let mut quick_options_graphics_api = crate::options::GraphicsApi::Default;
     let mut quick_options_arm64_backend = crate::options::Arm64Backend::Interpreter;
     let mut quick_options_arm64_fallback = crate::options::Arm64Fallback::Interpreter;
     let mut quick_options_llvmpipe_fallback = false;
-    let mut quick_options_metal_translator = true;
+    let mut quick_options_metal_translator = false;
     let mut quick_options_software_rendering = false;
     let mut quick_options_custom_driver = false;
     let mut quick_options_anisotropic_filtering = 1u8;
@@ -1468,6 +1474,8 @@ fn app_picker_inner(
             quick_options_llvmpipe_fallback = enabled;
         } else if let Some(enabled) = std::mem::take(&mut host_obj.metal_translator) {
             quick_options_metal_translator = enabled;
+        } else if let Some(enabled) = std::mem::take(&mut host_obj.pulse_audio) {
+            quick_options_pulse_audio = enabled;
         } else if let Some(enabled) = std::mem::take(&mut host_obj.software_rendering) {
             quick_options_software_rendering = enabled;
         } else if let Some(enabled) = std::mem::take(&mut host_obj.custom_driver) {
@@ -1506,6 +1514,7 @@ fn app_picker_inner(
     if let Some((major, minor, patch)) = quick_options_ios_version {
         option_args.push(format!("--ios-version={major}.{minor}.{patch}"));
     }
+    option_args.push(if quick_options_pulse_audio { "--pulse-audio" } else { "--disable-pulse-audio" }.to_string());
     if let Some(scale_hack) = quick_options_scale_hack {
         option_args.push(format!("--scale-hack={scale_hack}"));
     }
@@ -2440,7 +2449,7 @@ fn setup_quick_options(
         origin: CGPoint { x: 0.0, y: 0.0 },
         size: app_frame.size,
     };
-    let content_height = app_frame.size.height.max(2700.0);
+    let content_height = app_frame.size.height.max(4200.0);
     let main_frame = CGRect {
         origin: CGPoint { x: 0.0, y: 0.0 },
         size: CGSize {
@@ -2583,6 +2592,8 @@ fn setup_quick_options(
     let rows = [
         RowKind::Label("iOS version"),
         RowKind::IosVersionDropdown,
+        RowKind::Label("Pulse audio"),
+        RowKind::Switch("pulseAudio:", false),
         RowKind::Label("Graphics API"),
         RowKind::GraphicsApiDropdown,
         RowKind::Label("Custom driver"),
@@ -2608,7 +2619,7 @@ fn setup_quick_options(
         RowKind::Label("LLVMPipe fallback"),
         RowKind::Switch("llvmpipeFallback:", false),
         RowKind::Label("Metal translator (ARM64)"),
-        RowKind::Switch("metalTranslator:", true),
+        RowKind::Switch("metalTranslator:", false),
         RowKind::Label("Game folder"),
         RowKind::Buttons(&[
             ("Open folder", "openFileManager"),

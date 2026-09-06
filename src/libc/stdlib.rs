@@ -815,9 +815,11 @@ fn exit(env: &mut Environment, exit_code: i32) {
     }
 
     log!(
-        "Guest exit({}) on emulated thread {}",
+        "Guest exit({}) on emulated thread {} (bundle={}, current_pc={:#x})",
         exit_code,
-        env.current_thread
+        env.current_thread,
+        env.bundle.bundle_identifier(),
+        env.cpu.pc_with_thumb_bit().addr_without_thumb_bit()
     );
     env.stack_trace_current();
     echo!("App called exit({}); touchHLE will now quit.", exit_code);

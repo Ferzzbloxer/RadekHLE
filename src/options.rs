@@ -202,6 +202,8 @@ pub struct Options {
     pub revert_y_axis: bool,
     /// iOS version reported to guest applications. `None` uses the latest compatibility version.
     pub ios_version: Option<(i32, i32, i32)>,
+    /// Prefer OpenAL Soft's PulseAudio backend on Linux when enabled.
+    pub pulse_audio: bool,
     pub scale_hack: f32,
     pub deadzone: f32,
     pub analog_stick_tilt_controls: bool,
@@ -307,6 +309,7 @@ impl Default for Options {
             revert_x_axis: false,
             revert_y_axis: false,
             ios_version: None,
+            pulse_audio: false,
             scale_hack: 1.0,
             analog_stick_tilt_controls: true,
             deadzone: 0.1,
@@ -330,7 +333,7 @@ impl Default for Options {
             arm64_backend: Arm64Backend::Interpreter,
             arm64_fallback: Arm64Fallback::Interpreter,
             llvmpipe_fallback: false,
-            metal_translator: true,
+            metal_translator: false,
             gdb_listen_addrs: None,
             preferred_languages: None,
             headless: false,
@@ -424,6 +427,10 @@ impl Options {
                 return Err("Invalid value for --ios-version=".to_string());
             }
             self.ios_version = Some((major, minor, patch));
+        } else if arg == "--pulse-audio" {
+            self.pulse_audio = true;
+        } else if arg == "--disable-pulse-audio" {
+            self.pulse_audio = false;
         } else if let Some(value) = arg.strip_prefix("--screen-size=") {
             let (w, h) = value
                 .split_once(|c| c == 'x' || c == 'X' || c == ',')

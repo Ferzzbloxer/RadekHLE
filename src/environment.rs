@@ -1235,6 +1235,15 @@ impl Environment {
 
         let new_thread_id = self.threads.len() - 1;
 
+        log!(
+            "Created guest worker thread {} for bundle={} routine={:?} arg={:?} stack={:#x}..={:#x}",
+            new_thread_id,
+            self.bundle.bundle_identifier(),
+            start_routine,
+            user_data,
+            stack_alloc.to_bits(),
+            stack_high_addr - 1
+        );
         log_dbg!("Created new thread {} with stack {:#x}–{:#x}, will execute function {:?} with data {:?}", new_thread_id, stack_alloc.to_bits(), (stack_high_addr - 1), start_routine, user_data);
 
         new_thread_id
