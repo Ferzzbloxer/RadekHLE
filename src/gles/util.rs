@@ -366,9 +366,9 @@ pub unsafe fn decode_texture_to_rgba8(
                             ((((value >> 12) & 0xf) as u8) * 17),
                         ),
                         0x8366 => (
-                            ((((value & 0x1f) as u32 * 255 / 31) as u8),
-                            ((((value >> 5) & 0x1f) as u32 * 255 / 31) as u8),
-                            ((((value >> 10) & 0x1f) as u32 * 255 / 31) as u8),
+                            ((value & 0x1f) as u32 * 255 / 31) as u8,
+                            (((value >> 5) & 0x1f) as u32 * 255 / 31) as u8,
+                            (((value >> 10) & 0x1f) as u32 * 255 / 31) as u8,
                             if value & 0x8000 == 0 { 0 } else { 255 },
                         ),
                         _ => (
