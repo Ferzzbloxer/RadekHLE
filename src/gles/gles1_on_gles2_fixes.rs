@@ -1,7 +1,7 @@
 use super::gles1_on_gles2_logging::GLES1to2Logger;
 use crate::options::RenderRotation;
 
-const ROTATION_MODE: &str = "aggressive";
+const ROTATION_MODE: &str = "none";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RotationFixMode {

@@ -2362,14 +2362,41 @@ fn glTexImage2D(
             );
             gles.PixelStorei(gles11::UNPACK_ALIGNMENT, alignment);
         } else {
+            let legacy_internalformat = matches!(
+                internalformat as GLenum,
+                gles11::ALPHA
+                    | gles11::LUMINANCE
+                    | gles11::LUMINANCE_ALPHA
+                    | gles11::BGRA_EXT
+            );
+            let legacy_format = matches!(
+                format,
+                gles11::ALPHA
+                    | gles11::LUMINANCE
+                    | gles11::LUMINANCE_ALPHA
+                    | gles11::BGRA_EXT
+            );
+            let host_internalformat = if legacy_internalformat {
+                gles11::RGBA as GLint
+            } else {
+                internalformat
+            };
+            let host_format = if legacy_format { gles11::RGBA } else { format };
+            if legacy_internalformat || legacy_format {
+                log_dbg!(
+                    "Normalizing legacy texture allocation formats internal=0x{:x} format=0x{:x} for GLES3-compatible upload",
+                    internalformat as u32,
+                    format
+                );
+            }
             gles.TexImage2D(
                 target,
                 level,
-                internalformat,
+                host_internalformat,
                 width,
                 height,
                 border,
-                format,
+                host_format,
                 type_,
                 pixels,
             );
