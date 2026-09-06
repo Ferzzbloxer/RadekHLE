@@ -1279,7 +1279,7 @@ pub fn render_audio_unit(env: &mut Environment, audio_unit: AudioUnit) {
     }
 
     let remaining_buffers = queued_buffers.saturating_sub(processed_buffers);
-    if remaining_buffers > 1 {
+    if remaining_buffers > 2 {
         let mut drained_buffers = Vec::new();
         {
             let context = env

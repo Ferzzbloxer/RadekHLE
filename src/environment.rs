@@ -581,6 +581,11 @@ impl Environment {
         let mut dyld = dyld::Dyld::new();
         dyld.do_initial_linking(&bundle, &bins, &mut mem, &mut objc);
 
+        if bundle.bundle_identifier() == "com.dvloper.granny" && options.direct_memory_access {
+            log!("Disabling direct memory access for Granny: Unity's startup worker touches nil ObjC state that is unsafe with the direct Dynarmic mapping.");
+            options.direct_memory_access = false;
+        }
+
         let cpu = cpu::Cpu::new(match options.direct_memory_access {
             true => Some(&mut mem),
             false => None,
@@ -874,6 +879,11 @@ impl Environment {
         let mut dyld = dyld::Dyld::new();
 
         dyld.do_initial_linking_with_no_bins(&mut mem, &mut objc);
+
+        if bundle.bundle_identifier() == "com.dvloper.granny" && options.direct_memory_access {
+            log!("Disabling direct memory access for Granny: Unity's startup worker touches nil ObjC state that is unsafe with the direct Dynarmic mapping.");
+            options.direct_memory_access = false;
+        }
 
         let cpu = cpu::Cpu::new(match options.direct_memory_access {
             true => Some(&mut mem),

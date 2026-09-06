@@ -2256,7 +2256,10 @@ fn image_size_estimate(
         },
         gles11::UNSIGNED_SHORT_5_6_5
         | gles11::UNSIGNED_SHORT_4_4_4_4
-        | gles11::UNSIGNED_SHORT_5_5_5_1 => Some(2),
+        | gles11::UNSIGNED_SHORT_5_5_5_1
+        | 0x8365
+        | 0x8366 => Some(2),
+        0x8367 => Some(4),
         _ => None,
     };
     let Some(bpp) = bytes_per_pixel else {

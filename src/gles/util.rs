@@ -298,7 +298,10 @@ pub unsafe fn decode_texture_to_rgba8(
         },
         gles11::UNSIGNED_SHORT_5_6_5
         | gles11::UNSIGNED_SHORT_4_4_4_4
-        | gles11::UNSIGNED_SHORT_5_5_5_1 => 2,
+        | gles11::UNSIGNED_SHORT_5_5_5_1
+        | 0x8365
+        | 0x8366 => 2,
+        0x8367 => 4,
         _ => return None,
     };
     let alignment = unpack_alignment.max(1) as usize;
@@ -339,7 +342,9 @@ pub unsafe fn decode_texture_to_rgba8(
                 },
                 gles11::UNSIGNED_SHORT_5_6_5
                 | gles11::UNSIGNED_SHORT_4_4_4_4
-                | gles11::UNSIGNED_SHORT_5_5_5_1 => {
+                | gles11::UNSIGNED_SHORT_5_5_5_1
+                | 0x8365
+                | 0x8366 => {
                     let value = (src as *const u16).read_unaligned();
                     match type_ {
                         gles11::UNSIGNED_SHORT_5_6_5 => (
@@ -354,6 +359,18 @@ pub unsafe fn decode_texture_to_rgba8(
                             ((((value >> 4) & 0xf) as u8) * 17),
                             (((value & 0xf) as u8) * 17),
                         ),
+                        0x8365 => (
+                            (((value & 0xf) as u8) * 17),
+                            ((((value >> 4) & 0xf) as u8) * 17),
+                            ((((value >> 8) & 0xf) as u8) * 17),
+                            ((((value >> 12) & 0xf) as u8) * 17),
+                        ),
+                        0x8366 => (
+                            ((((value & 0x1f) as u32 * 255 / 31) as u8),
+                            ((((value >> 5) & 0x1f) as u32 * 255 / 31) as u8),
+                            ((((value >> 10) & 0x1f) as u32 * 255 / 31) as u8),
+                            if value & 0x8000 == 0 { 0 } else { 255 },
+                        ),
                         _ => (
                             ((((value >> 11) & 0x1f) as u32 * 255 / 31) as u8),
                             ((((value >> 6) & 0x1f) as u32 * 255 / 31) as u8),
@@ -361,6 +378,15 @@ pub unsafe fn decode_texture_to_rgba8(
                             if value & 1 == 0 { 0 } else { 255 },
                         ),
                     }
+                }
+                0x8367 => {
+                    let value = (src as *const u32).read_unaligned();
+                    (
+                        (value & 0xff) as u8,
+                        ((value >> 8) & 0xff) as u8,
+                        ((value >> 16) & 0xff) as u8,
+                        ((value >> 24) & 0xff) as u8,
+                    )
                 }
                 _ => return None,
             };
