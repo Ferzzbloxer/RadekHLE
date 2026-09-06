@@ -13,7 +13,6 @@
 use super::gles2_raw as gl;
 use super::gles2_raw::types::*;
 use super::gles11_raw as es1;
-use super::gles1_on_gles2_fixes::{apply_axis_reverts, apply_render_rotation, rotation_fix_mode, MatrixFixer};
 use super::gles1_on_gles2_logging::{self, GLES1to2Logger};
 use super::gles_generic::{GLchar, GLES};
 use super::util::{fixed_to_float, float_to_fixed, try_decode_pvrtc};
@@ -23,8 +22,6 @@ use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::marker::PhantomData;
 
-const VIEWPORT_FIX_VERSION: u32 = 0;
-const PROJECTION_FIX_VERSION: u32 = 0;
 const ATTR_POSITION: GLuint = 0;
 const ATTR_COLOR: GLuint = 1;
 const ATTR_NORMAL: GLuint = 2;
@@ -147,9 +144,6 @@ struct TranslatorState {
     texture_crop_rect: [GLint; 4],
     viewport: [GLint; 4],
     actual_window_size: (u32, u32),
-    render_rotation: crate::options::RenderRotation,
-    revert_x_axis: bool,
-    revert_y_axis: bool,
     first_viewport_logged: bool,
     program: Option<GLuint>,
     program_creation_failed: bool,
@@ -224,9 +218,6 @@ impl TranslatorState {
             texture_crop_rect: [0, 0, 0, 0],
             viewport: [0, 0, 0, 0],
             actual_window_size: (0, 0),
-            render_rotation: crate::options::RenderRotation::Default,
-            revert_x_axis: false,
-            revert_y_axis: false,
             first_viewport_logged: false,
             program: None,
             program_creation_failed: false,
@@ -245,22 +236,13 @@ impl TranslatorState {
     }
 
     fn mvp(&self) -> [GLfloat; 16] {
-        let mut matrix = apply_projection_fix(multiply(&self.projection.current, &self.modelview.current));
+        let matrix = multiply(&self.projection.current, &self.modelview.current);
         let logger = GLES1to2Logger::new("mvp_upload", "GLES2 vertex shader");
         logger.log_matrix("projection_input", &self.projection.current, true);
         logger.log_matrix("modelview_input", &self.modelview.current, true);
-        logger.log_matrix("projection_modelview", &matrix, true);
-        let mut result = MatrixFixer::apply_all_fixes(&mut matrix, &logger);
-        result = apply_render_rotation(&mut result, self.render_rotation, &logger);
-        result = apply_axis_reverts(
-            &mut result,
-            self.revert_x_axis,
-            self.revert_y_axis,
-            &logger,
-        );
-        logger.log_matrix("mvp_final", &result, false);
+        logger.log_matrix("guest_projection_modelview", &matrix, false);
         logger.finish();
-        result
+        matrix
     }
 }
 
@@ -327,15 +309,6 @@ fn log_viewport(actual_width: u32, actual_height: u32, x: GLint, y: GLint, width
     }
 }
 
-fn apply_viewport(x: GLint, y: GLint, width: GLsizei, height: GLsizei) -> (GLint, GLint, GLsizei, GLsizei) {
-    match VIEWPORT_FIX_VERSION {
-        1 => (x, y, height, width),
-        2 => (x, -y, width, height),
-        3 => (x, -y, height, width),
-        _ => (x, y, width, height),
-    }
-}
-
 fn diagnose_matrix_conversion(gles1_matrix: &[GLfloat; 16], gles2_matrix: &[GLfloat; 16]) {
     if !coordinate_trace_enabled() {
         return;
@@ -355,13 +328,6 @@ fn diagnose_matrix_conversion(gles1_matrix: &[GLfloat; 16], gles2_matrix: &[GLfl
     if (gles1_matrix[5] - gles2_matrix[5]).abs() > 0.001 {
         log!("[GLES1→GLES2 SCALE CHANGE] Y-axis scaling changed");
     }
-}
-
-fn apply_projection_fix(mut matrix: [GLfloat; 16]) -> [GLfloat; 16] {
-    if PROJECTION_FIX_VERSION == 1 {
-        matrix[5] = -matrix[5];
-    }
-    matrix
 }
 
 fn transform_vec4(matrix: &[GLfloat; 16], value: [GLfloat; 4]) -> [GLfloat; 4] {
@@ -397,12 +363,9 @@ impl GLESContext for GLES1OnGLES2Context {
     fn new(window: &mut Window) -> Result<Self, String> {
         gles1_on_gles2_logging::reset_state();
         gles1_on_gles2_logging::instrument_rendering_pipeline();
-        gles1_on_gles2_logging::log_initialization(rotation_fix_mode().as_str());
+        gles1_on_gles2_logging::log_initialization("raw guest matrices; final transform is presentation-only");
         gles1_on_gles2_logging::log_gl_state_initialized();
-        let mut state = TranslatorState::new();
-        state.render_rotation = window.render_rotation();
-        state.revert_x_axis = window.revert_x_axis();
-        state.revert_y_axis = window.revert_y_axis();
+        let state = TranslatorState::new();
         Ok(Self {
             gl_ctx: window.create_gl_context(GLVersion::GLES20)?,
             is_loaded: false,
@@ -429,9 +392,6 @@ impl GLESContext for GLES1OnGLES2Context {
         );
         crate::gles::gles1_on_gles2_logging::trace_viewport_usage("window log generation");
         self.state.actual_window_size = drawable_size;
-        self.state.render_rotation = window.render_rotation();
-        self.state.revert_x_axis = window.revert_x_axis();
-        self.state.revert_y_axis = window.revert_y_axis();
         Box::new(GLES1OnGLES2 {
             state: &mut self.state,
             _gl_lifetime: PhantomData,
@@ -1439,17 +1399,13 @@ impl GLES for GLES1OnGLES2<'_> {
     }
     unsafe fn LoadMatrixf(&mut self, m: *const GLfloat) {
         let logger = GLES1to2Logger::new("glLoadMatrixf", "matrix state");
-        let mut values: [GLfloat; 16] = std::slice::from_raw_parts(m, 16).try_into().unwrap();
-        let corrected = crate::gles::correct_inverted_ortho_matrix(&mut values);
+        let values: [GLfloat; 16] = std::slice::from_raw_parts(m, 16).try_into().unwrap();
         self.state.matrix_mut().current = values;
         log_matrix_operation("glLoadMatrixf", format!("mode={}", matrix_mode_name(self.state.matrix_mode)));
         log_matrix_result("glLoadMatrixf", &values);
         if self.state.matrix_mode == es1::PROJECTION {
             crate::gles::gles1_on_gles2_logging::log_projection_matrix("glLoadMatrixf", &values);
             crate::gles::log_ortho_matrix_details(&values, "after glLoadMatrixf");
-        }
-        if corrected {
-            log!("[ORTHO PROJECTION CORRECTION] GLES1-on-GLES2 glLoadMatrixf corrected");
         }
         logger.log_matrix("result", &values, false);
         logger.finish();
@@ -1460,16 +1416,12 @@ impl GLES for GLES1OnGLES2<'_> {
         for (d, s) in out.iter_mut().zip(std::slice::from_raw_parts(m, 16)) {
             *d = fixed_to_float(*s);
         }
-        let corrected = crate::gles::correct_inverted_ortho_matrix(&mut out);
         self.state.matrix_mut().current = out;
         log_matrix_operation("glLoadMatrixx", format!("mode={}", matrix_mode_name(self.state.matrix_mode)));
         log_matrix_result("glLoadMatrixx", &out);
         if self.state.matrix_mode == es1::PROJECTION {
             crate::gles::gles1_on_gles2_logging::log_projection_matrix("glLoadMatrixx", &out);
             crate::gles::log_ortho_matrix_details(&out, "after glLoadMatrixx");
-        }
-        if corrected {
-            log!("[ORTHO PROJECTION CORRECTION] GLES1-on-GLES2 glLoadMatrixx corrected");
         }
         logger.log_matrix("result", &out, false);
         logger.finish();
@@ -1528,7 +1480,6 @@ impl GLES for GLES1OnGLES2<'_> {
     }
     unsafe fn Orthof(&mut self, l: GLfloat, r: GLfloat, b: GLfloat, t: GLfloat, n: GLfloat, f: GLfloat) {
         let logger = GLES1to2Logger::new("glOrthof", "projection");
-        let (l, r, b, t) = crate::gles::normalize_inverted_ortho_bounds(l, r, b, t);
         let a = self.state.matrix_mut().current;
         self.state.matrix_mut().current = multiply(&a, &ortho(l, r, b, t, n, f));
         log_matrix_operation("glOrthof", format!("left={l}, right={r}, bottom={b}, top={t}, near={n}, far={f}"));
@@ -1604,7 +1555,6 @@ impl GLES for GLES1OnGLES2<'_> {
     unsafe fn Viewport(&mut self, x: GLint, y: GLint, w: GLsizei, h: GLsizei) {
         let logger = GLES1to2Logger::new("glViewport", "viewport");
         let (requested_x, requested_y, requested_w, requested_h) = (x, y, w, h);
-        let (x, y, w, h) = apply_viewport(x, y, w, h);
         crate::gles::gles1_on_gles2_logging::update_viewport_state((x, y, w, h));
         let synced_scissor = crate::gles::gles1_on_gles2_logging::sync_scissor_to_viewport();
         if let Some((scissor_x, scissor_y, scissor_w, scissor_h)) = synced_scissor {
@@ -1612,7 +1562,7 @@ impl GLES for GLES1OnGLES2<'_> {
         }
         logger.log_viewport(requested_x, requested_y, requested_w.max(0) as u32, requested_h.max(0) as u32, Some((x, y, w.max(0) as u32, h.max(0) as u32)));
         if !self.state.first_viewport_logged {
-            log!("[GLES1→GLES2 VIEWPORT FIX] version={} requested=({}, {}, {}, {}) applied=({}, {}, {}, {}) actual_window={}x{}", VIEWPORT_FIX_VERSION, requested_x, requested_y, requested_w, requested_h, x, y, w, h, self.state.actual_window_size.0, self.state.actual_window_size.1);
+            log!("[GLES1→GLES2 RAW VIEWPORT] requested=({}, {}, {}, {}) submitted unchanged; final scaling is presentation-only; drawable={}x{}", requested_x, requested_y, requested_w, requested_h, self.state.actual_window_size.0, self.state.actual_window_size.1);
             self.state.first_viewport_logged = true;
         }
         log_viewport(self.state.actual_window_size.0, self.state.actual_window_size.1, x, y, w, h);

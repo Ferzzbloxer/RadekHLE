@@ -21,7 +21,7 @@ use crate::gles::{
 };
 use crate::image::Image;
 use crate::matrix::Matrix;
-use crate::options::Options;
+use crate::options::{Options, RenderRotation};
 use crate::Environment;
 use sdl2::mouse::MouseButton;
 use sdl2::pixels::{Color, PixelFormatEnum};
@@ -51,65 +51,6 @@ pub(crate) fn calculate_letterboxed_viewport(
         (drawable_width, (drawable_width as f64 / game_aspect).round() as u32)
     };
     ((drawable_width - width) / 2, (drawable_height - height) / 2, width, height)
-}
-
-pub(crate) fn viewport_mismatch_fix_enabled(bundle_identifier: &str) -> bool {
-    if std::env::var_os("TOUCHHLE_FORCE_VIEWPORT_FIX").is_some() {
-        return true;
-    }
-    let id = bundle_identifier.to_ascii_lowercase();
-    id.contains("ninjago")
-        || id.contains("scavenger")
-        || id.contains("riseofthesnakes")
-        || id.contains("rise_of_the_snakes")
-}
-
-pub(crate) fn fix_viewport_dimension_mismatch(
-    game_size: (u32, u32),
-    requested: (i32, i32),
-    drawable_size: (u32, u32),
-) -> (i32, i32) {
-    let game_landscape = game_size.0 > game_size.1;
-    let requested_landscape = requested.0 > requested.1;
-    let drawable_landscape = drawable_size.0 > drawable_size.1;
-    if game_size.0 > 0
-        && game_size.1 > 0
-        && requested.0 > 0
-        && requested.1 > 0
-        && game_landscape == drawable_landscape
-        && game_landscape != requested_landscape
-    {
-        (requested.1, requested.0)
-    } else {
-        requested
-    }
-}
-
-pub(crate) fn map_game_rect_to_drawable(
-    rect: (i32, i32, u32, u32),
-    game_size: (u32, u32),
-    viewport: (u32, u32, u32, u32),
-) -> (i32, i32, u32, u32) {
-    let (game_width, game_height) = game_size;
-    if game_width == 0 || game_height == 0 || viewport.2 == 0 || viewport.3 == 0 {
-        return (viewport.0 as i32, viewport.1 as i32, 0, 0);
-    }
-    let scale_x = viewport.2 as f64 / game_width as f64;
-    let scale_y = viewport.3 as f64 / game_height as f64;
-    let left = (viewport.0 as f64 + rect.0 as f64 * scale_x)
-        .clamp(viewport.0 as f64, (viewport.0 + viewport.2) as f64);
-    let top = (viewport.1 as f64 + rect.1 as f64 * scale_y)
-        .clamp(viewport.1 as f64, (viewport.1 + viewport.3) as f64);
-    let right = (viewport.0 as f64 + (rect.0.max(0) as f64 + rect.2 as f64) * scale_x)
-        .clamp(left, (viewport.0 + viewport.2) as f64);
-    let bottom = (viewport.1 as f64 + (rect.1.max(0) as f64 + rect.3 as f64) * scale_y)
-        .clamp(top, (viewport.1 + viewport.3) as f64);
-    (
-        left.round() as i32,
-        top.round() as i32,
-        (right - left).round() as u32,
-        (bottom - top).round() as u32,
-    )
 }
 
 #[derive(Default)]
@@ -1070,33 +1011,33 @@ fn surface_from_image(image: &Image) -> Surface<'_> {
     surface
 }
 
-fn orient_software_pixels(
+fn transform_software_pixels(
     pixels: Vec<u8>,
     width: u32,
     height: u32,
-    orientation: DeviceOrientation,
+    quarter_turns: i32,
+    flip_x: bool,
+    flip_y: bool,
 ) -> (Vec<u8>, u32, u32) {
-    let quarter_turns = match orientation {
-        DeviceOrientation::Portrait => 0,
-        DeviceOrientation::LandscapeRight => 1,
-        DeviceOrientation::PortraitUpsideDown => 2,
-        DeviceOrientation::LandscapeLeft => 3,
-    };
-    if quarter_turns == 0 {
-        return (pixels, width, height);
-    }
+    let quarter_turns = quarter_turns.rem_euclid(4);
     let (output_width, output_height) = if quarter_turns % 2 == 0 {
         (width, height)
     } else {
         (height, width)
     };
+    if quarter_turns == 0 && !flip_x && !flip_y {
+        return (pixels, width, height);
+    }
     let mut output = vec![0u8; output_width as usize * output_height as usize * 4];
     for y in 0..height as usize {
         for x in 0..width as usize {
+            let source_x = if flip_x { width as usize - 1 - x } else { x };
+            let source_y = if flip_y { height as usize - 1 - y } else { y };
             let (destination_x, destination_y) = match quarter_turns {
-                1 => (height as usize - 1 - y, x),
-                2 => (width as usize - 1 - x, height as usize - 1 - y),
-                _ => (y, width as usize - 1 - x),
+                0 => (source_x, source_y),
+                1 => (height as usize - 1 - source_y, source_x),
+                2 => (width as usize - 1 - source_x, height as usize - 1 - source_y),
+                _ => (source_y, width as usize - 1 - source_x),
             };
             let source = (y * width as usize + x) * 4;
             let destination = (destination_y * output_width as usize + destination_x) * 4;
@@ -2620,6 +2561,36 @@ impl Window {
         self.frame_generation_state.previous = Some(current);
     }
 
+    fn prepare_native_frame(
+        &self,
+        pixels: Vec<u8>,
+        width: u32,
+        height: u32,
+        bottom_up: bool,
+    ) -> (Vec<u8>, u32, u32, bool) {
+        if width == 0 || height == 0 || pixels.len() < width as usize * height as usize * 4 {
+            return (pixels, width, height, false);
+        }
+        let row_bytes = width as usize * 4;
+        let mut top_down = vec![0u8; width as usize * height as usize * 4];
+        for y in 0..height as usize {
+            let source_y = if bottom_up { height as usize - 1 - y } else { y };
+            let source = source_y * row_bytes;
+            let destination = y * row_bytes;
+            top_down[destination..destination + row_bytes]
+                .copy_from_slice(&pixels[source..source + row_bytes]);
+        }
+        let (transformed, output_width, output_height) = transform_software_pixels(
+            top_down,
+            width,
+            height,
+            self.presentation_quarter_turns(),
+            self.revert_x_axis,
+            self.revert_y_axis,
+        );
+        (transformed, output_width, output_height, false)
+    }
+
     pub fn present_native_frame(
         &mut self,
         mut pixels: Vec<u8>,
@@ -2628,6 +2599,18 @@ impl Window {
         bottom_up: bool,
     ) {
         self.apply_rtcs(&mut pixels, width, height);
+        let (pixels, width, height, bottom_up) =
+            self.prepare_native_frame(pixels, width, height, bottom_up);
+        self.present_native_frame_prepared(pixels, width, height, bottom_up);
+    }
+
+    fn present_native_frame_prepared(
+        &mut self,
+        pixels: Vec<u8>,
+        width: u32,
+        height: u32,
+        bottom_up: bool,
+    ) {
         if self.frame_generation {
             if let Some(mut wgpu) = self.wgpu_presentation.take() {
                 let result = wgpu.present_interpolated(
@@ -2654,7 +2637,7 @@ impl Window {
                 self.frame_generation_state.last_frame_at = None;
             }
             if !self.frame_generation {
-                self.present_native_frame(pixels, width, height, bottom_up);
+                self.present_native_frame_prepared(pixels, width, height, bottom_up);
             }
             return;
         }
@@ -2693,8 +2676,14 @@ impl Window {
                 .copy_from_slice(&pixels[source..source + width as usize * 4]);
         }
 
-        let (mut source_pixels, source_width, source_height) =
-            orient_software_pixels(source_pixels, width, height, self.device_orientation);
+        let (mut source_pixels, source_width, source_height) = transform_software_pixels(
+            source_pixels,
+            width,
+            height,
+            self.presentation_quarter_turns(),
+            self.revert_x_axis,
+            self.revert_y_axis,
+        );
         let source = match Surface::from_data(
             &mut source_pixels,
             source_width,
@@ -2762,9 +2751,9 @@ impl Window {
         let rotation = if self.splash_image_is_orientation_specific {
             Matrix::identity()
         } else if is_landscape && image_height > image_width {
-            self.rotation_matrix().inverse().unwrap()
+            self.presentation_matrix().inverse().unwrap()
         } else {
-            self.rotation_matrix()
+            self.presentation_matrix()
         };
 
         // OpenGL ES expects bottom-to-top row order for image data, but our
@@ -3061,6 +3050,40 @@ impl Window {
         }
     }
 
+    /// Transform an already-rendered game-space image for final display only.
+    /// Guest matrices and viewports never use this transform.
+    pub fn presentation_matrix(&self) -> Matrix<2> {
+        let render_rotation = match self.render_rotation {
+            RenderRotation::Default => Matrix::identity(),
+            RenderRotation::Minus90 => Matrix::z_rotation(-FRAC_PI_2),
+            RenderRotation::Minus180 | RenderRotation::Plus180 => Matrix::z_rotation(PI),
+            RenderRotation::Plus90 => Matrix::z_rotation(FRAC_PI_2),
+        };
+        let axis_revert = Matrix::scale_2d(
+            if self.revert_x_axis { -1.0 } else { 1.0 },
+            if self.revert_y_axis { -1.0 } else { 1.0 },
+        );
+        self.rotation_matrix()
+            .multiply(&render_rotation)
+            .multiply(&axis_revert)
+    }
+
+    fn presentation_quarter_turns(&self) -> i32 {
+        let device_turns: i32 = match self.device_orientation {
+            DeviceOrientation::Portrait => 0,
+            DeviceOrientation::LandscapeRight => 1,
+            DeviceOrientation::PortraitUpsideDown => 2,
+            DeviceOrientation::LandscapeLeft => 3,
+        };
+        let render_turns: i32 = match self.render_rotation {
+            RenderRotation::Default => 0,
+            RenderRotation::Minus90 => 3,
+            RenderRotation::Minus180 | RenderRotation::Plus180 => 2,
+            RenderRotation::Plus90 => 1,
+        };
+        (device_turns + render_turns).rem_euclid(4)
+    }
+
     pub fn is_screen_saver_enabled(&self) -> bool {
         self.video_ctx.is_screen_saver_enabled()
     }
@@ -3267,47 +3290,36 @@ pub fn show_alert_dialog(
 }
 
 #[cfg(test)]
-mod viewport_mapping_tests {
-    use super::map_game_rect_to_drawable;
+mod presentation_tests {
+    use super::{calculate_letterboxed_viewport, transform_software_pixels};
 
     #[test]
     fn portrait_game_is_letterboxed_inside_landscape_drawable() {
-        let viewport = (1064, 0, 960, 1440);
         assert_eq!(
-            map_game_rect_to_drawable((0, 0, 320, 480), (320, 480), viewport),
-            (1064, 0, 960, 1440)
-        );
-        assert_eq!(
-            map_game_rect_to_drawable((0, 0, 160, 240), (320, 480), viewport),
-            (1064, 0, 480, 720)
-        );
-    }
-
-    #[test]
-    fn mapped_scissor_is_clamped_to_letterboxed_viewport() {
-        let viewport = (1064, 0, 960, 1440);
-        assert_eq!(
-            map_game_rect_to_drawable((-20, -10, 400, 520), (320, 480), viewport),
+            calculate_letterboxed_viewport(320, 480, 3088, 1440),
             (1064, 0, 960, 1440)
         );
     }
 
     #[test]
-    fn viewport_mismatch_fix_is_scoped_to_ninjago_games() {
-        assert!(super::viewport_mismatch_fix_enabled("com.lego.ninjago.scavenger"));
-        assert!(super::viewport_mismatch_fix_enabled("com.lego.rise_of_the_snakes"));
-        assert!(!super::viewport_mismatch_fix_enabled("com.example.normal-game"));
+    fn output_rotation_preserves_pixels_and_swaps_dimensions() {
+        let pixels = vec![
+            1, 0, 0, 255, 2, 0, 0, 255,
+            3, 0, 0, 255, 4, 0, 0, 255,
+        ];
+        let (rotated, width, height) = transform_software_pixels(pixels, 2, 2, 1, false, false);
+        assert_eq!((width, height), (2, 2));
+        assert_eq!(rotated, vec![3, 0, 0, 255, 1, 0, 0, 255, 4, 0, 0, 255, 2, 0, 0, 255]);
     }
 
     #[test]
-    fn landscape_game_swaps_portrait_requested_dimensions() {
-        assert_eq!(
-            super::fix_viewport_dimension_mismatch((480, 320), (320, 480), (3088, 1440)),
-            (480, 320)
-        );
-        assert_eq!(
-            super::fix_viewport_dimension_mismatch((320, 480), (320, 480), (1440, 3088)),
-            (320, 480)
-        );
+    fn output_axis_reverts_are_applied_before_rotation() {
+        let pixels = vec![
+            1, 0, 0, 255, 2, 0, 0, 255,
+            3, 0, 0, 255, 4, 0, 0, 255,
+        ];
+        let (flipped, width, height) = transform_software_pixels(pixels, 2, 2, 0, true, false);
+        assert_eq!((width, height), (2, 2));
+        assert_eq!(flipped, vec![2, 0, 0, 255, 1, 0, 0, 255, 4, 0, 0, 255, 3, 0, 0, 255]);
     }
 }

@@ -179,7 +179,7 @@ pub fn recomposite_if_necessary(env: &mut Environment, force: bool) -> Option<In
     let software_presentation = env.window().is_software_presentation();
     let present_frame_args = (
         env.window().viewport(),
-        env.window().rotation_matrix(),
+        env.window().presentation_matrix(),
         env.window().virtual_cursor_visible_at(),
     );
 

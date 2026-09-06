@@ -662,206 +662,48 @@ fn glSampleCoveragex(env: &mut Environment, value: GLclampx, invert: GLboolean) 
 fn glShadeModel(env: &mut Environment, mode: GLenum) {
     with_ctx_and_mem(env, |gles, _mem| unsafe { gles.ShadeModel(mode) })
 }
-fn log_game_rect_mapping(env: &Environment, label: &str, x: GLint, y: GLint, width: GLsizei, height: GLsizei) {
-    if !crate::gles::translator_tracing_enabled() {
-        return;
-    }
-    let Some(window) = env.window.as_ref() else {
-        return;
-    };
-    let game_size = window.framebuffer_size();
-    let drawable_size = window.drawable_size();
-    let drawable_viewport = window.viewport();
-    let (fixed_width, fixed_height) = if crate::window::viewport_mismatch_fix_enabled(
-        env.bundle.bundle_identifier(),
-    ) {
-        crate::window::fix_viewport_dimension_mismatch(game_size, (width, height), drawable_size)
-    } else {
-        (width, height)
-    };
-    let mapped = crate::window::map_game_rect_to_drawable(
-        (x, y, fixed_width.max(0) as u32, fixed_height.max(0) as u32),
-        game_size,
-        drawable_viewport,
-    );
-    log!(
-        "[{label} MAPPING] bundle={} game={}x{} rect=({}, {}, {}, {}) rect_fixed=({}, {}, {}, {}) drawable={}x{} viewport=({}, {}, {}, {}) mapped=({}, {}, {}, {})",
-        env.bundle.bundle_identifier(),
-        game_size.0,
-        game_size.1,
-        x,
-        y,
-        width,
-        height,
-        x,
-        y,
-        fixed_width,
-        fixed_height,
-        drawable_size.0,
-        drawable_size.1,
-        drawable_viewport.0,
-        drawable_viewport.1,
-        drawable_viewport.2,
-        drawable_viewport.3,
-        mapped.0,
-        mapped.1,
-        mapped.2,
-        mapped.3,
-    );
-    if label == "SCISSOR" {
-        let viewport_right = drawable_viewport.0 + drawable_viewport.2;
-        let viewport_bottom = drawable_viewport.1 + drawable_viewport.3;
-        let inside = mapped.0 >= drawable_viewport.0 as i32
-            && mapped.1 >= drawable_viewport.1 as i32
-            && mapped.0 as u32 + mapped.2 <= viewport_right
-            && mapped.1 as u32 + mapped.3 <= viewport_bottom;
-        log!(
-            "[VIEWPORT DIMENSION FIX] bundle={} requested={}x{} fixed={}x{}",
-            env.bundle.bundle_identifier(),
-            width,
-            height,
-            fixed_width,
-            fixed_height,
-        );
-        log!(
-            "[VIEWPORT/SCISSOR VALIDATION] bundle={} scissor_within_viewport={}",
-            env.bundle.bundle_identifier(),
-            inside
-        );
-    }
-}
-
-fn fix_guest_rect_dimensions(
+fn log_game_rect(
     env: &Environment,
     label: &str,
+    x: GLint,
+    y: GLint,
     width: GLsizei,
     height: GLsizei,
-) -> (GLsizei, GLsizei) {
-    let Some(window) = env.window.as_ref() else {
-        return (width, height);
-    };
-    let fixed = if crate::window::viewport_mismatch_fix_enabled(
-        env.bundle.bundle_identifier(),
-    ) {
-        crate::window::fix_viewport_dimension_mismatch(
-            window.framebuffer_size(),
-            (width, height),
-            window.drawable_size(),
-        )
-    } else {
-        (width, height)
-    };
-    if fixed != (width, height) {
+    submitted: (GLint, GLint, GLsizei, GLsizei),
+) {
+    if crate::gles::translator_tracing_enabled() {
         log!(
-            "[VIEWPORT DIMENSION MISMATCH] bundle={} kind={} game={}x{} requested={}x{} fixed={}x{} drawable={}x{}",
+            "[{label} GAME SPACE] bundle={} requested=({}, {}, {}, {}) submitted=({}, {}, {}, {}) scale_hack={} drawable conversion is deferred to final presentation",
             env.bundle.bundle_identifier(),
-            label,
-            window.framebuffer_size().0,
-            window.framebuffer_size().1,
+            x,
+            y,
             width,
             height,
-            fixed.0,
-            fixed.1,
-            window.drawable_size().0,
-            window.drawable_size().1,
+            submitted.0,
+            submitted.1,
+            submitted.2,
+            submitted.3,
+            env.options.scale_hack,
         );
     }
-    (fixed.0 as GLsizei, fixed.1 as GLsizei)
 }
 
 fn glScissor(env: &mut Environment, x: GLint, y: GLint, width: GLsizei, height: GLsizei) {
-    log_game_rect_mapping(env, "SCISSOR", x, y, width, height);
-    if crate::gles::translator_tracing_enabled() {
-        log!("[GLES GUEST STATE] glScissor requested x={} y={} width={} height={} scale_hack={}", x, y, width, height, env.options.scale_hack);
-    }
-    {
-        use std::sync::atomic::{AtomicBool, Ordering};
-        static SEEN: AtomicBool = AtomicBool::new(false);
-        if !SEEN.swap(true, Ordering::Relaxed) {
-            log_dbg!("First glScissor({}, {}, {}, {})", x, y, width, height);
-        }
-    }
-    let (width, height) = fix_guest_rect_dimensions(env, "scissor", width, height);
     let factor = env.options.scale_hack;
     let scale = |value: GLsizei| (value as f32 * factor).round() as GLsizei;
-    let (x, y) = (scale(x), scale(y));
-    let (width, height) = (scale(width), scale(height));
-    log_game_rect_mapping(env, "SCISSOR", x, y, width, height);
-    if crate::gles::translator_tracing_enabled() {
-        log!("[GLES GUEST STATE] glScissor scaled x={} y={} width={} height={}", x, y, width, height);
-    }
+    let submitted = (scale(x), scale(y), scale(width), scale(height));
+    log_game_rect(env, "SCISSOR", x, y, width, height, submitted);
     with_ctx_and_mem(env, |gles, _mem| unsafe {
-        gles.Scissor(x, y, width, height)
+        gles.Scissor(submitted.0, submitted.1, submitted.2, submitted.3)
     })
 }
 fn glViewport(env: &mut Environment, x: GLint, y: GLint, width: GLsizei, height: GLsizei) {
-    log_game_rect_mapping(env, "VIEWPORT", x, y, width, height);
-    // ULTRAHLE_MINIONJUMP_VIEWPORT_BEGIN
-    let (x, y, width, height) = if matches!(
-        env.bundle.bundle_identifier(),
-        "com.apprisetec9.minionjump" | "com.risinghighapps.kingdomprincepro"
-    ) && x == 0
-        && y == 0
-        && width == 768
-        && height == 1024
-    {
-        log!("UltraHLE MinionJump: viewport swap 768x1024 -> 1024x768");
-        (0, 0, 1024, 768)
-    } else if std::env::var_os("TOUCHHLE_FORCE_IPAD_LANDSCAPE_SCREEN").is_some()
-        && x == 0
-        && y == 0
-        && width == 768
-        && height == 1024
-    {
-        log!("UltraHLE MinionJump: env iPad landscape viewport swap 768x1024 -> 1024x768");
-        (0, 0, 1024, 768)
-    } else {
-        (x, y, width, height)
-    };
-    // ULTRAHLE_MINIONJUMP_VIEWPORT_END
-    let (mut x, mut y, mut width, mut height) = (x, y, width, height);
-
-    if std::env::var_os("TOUCHHLE_FORCE_LANDSCAPE_VIEWPORT").is_some() {
-        // PotatoGold/adrastea-style landscape apps can end up with a 20px
-        // status-bar-shortened portrait-derived viewport, e.g. 460x320,
-        // even after UIScreen/EAGL have been made landscape. That leaves the
-        // final frame cropped/scuffed. In this compatibility mode, promote
-        // the common iPhone landscape viewport cases to the full 480x320
-        // logical viewport.
-        let should_force = (x == 0 && y == 0 && width == 460 && height == 320)
-            || (x == 0 && y == 0 && width == 320 && height == 460)
-            || (x == 0 && y == 0 && width == 320 && height == 480);
-
-        if should_force {
-            log!(
-                "TOUCHHLE_FORCE_LANDSCAPE_VIEWPORT=1: overriding glViewport({}, {}, {}, {}) to glViewport(0, 0, 480, 320)",
-                x,
-                y,
-                width,
-                height
-            );
-            x = 0;
-            y = 0;
-            width = 480;
-            height = 320;
-        }
-    }
-
-    {
-        use std::sync::atomic::{AtomicBool, Ordering};
-        static SEEN: AtomicBool = AtomicBool::new(false);
-        if !SEEN.swap(true, Ordering::Relaxed) {
-            log_dbg!("First glViewport({}, {}, {}, {})", x, y, width, height);
-        }
-    }
-    let (width, height) = fix_guest_rect_dimensions(env, "viewport", width, height);
     let factor = env.options.scale_hack;
     let scale = |value: GLsizei| (value as f32 * factor).round() as GLsizei;
-    let (x, y) = (scale(x), scale(y));
-    let (width, height) = (scale(width), scale(height));
-    log_game_rect_mapping(env, "VIEWPORT", x, y, width, height);
+    let submitted = (scale(x), scale(y), scale(width), scale(height));
+    log_game_rect(env, "VIEWPORT", x, y, width, height, submitted);
     with_ctx_and_mem(env, |gles, _mem| unsafe {
-        gles.Viewport(x, y, width, height)
+        gles.Viewport(submitted.0, submitted.1, submitted.2, submitted.3)
     })
 }
 fn glLineWidth(env: &mut Environment, val: GLfloat) {

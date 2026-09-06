@@ -20,9 +20,6 @@
 
 use super::gl21compat_raw as gl21;
 use super::gl21compat_raw::types::*;
-use super::gles1_on_gles2_fixes::{apply_axis_reverts, apply_render_rotation};
-use super::gles1_on_gles2_logging::GLES1to2Logger;
-use crate::options::RenderRotation;
 use super::gles11_raw as gles11; // constants only
 use super::gles_generic::GLES;
 use super::util::{
@@ -492,9 +489,6 @@ pub struct GLES1OnGL2State {
     palette_matrices: Vec<[GLfloat; 16]>,
     palette_weight_state: MatrixArrayPointerState,
     palette_index_state: MatrixArrayPointerState,
-    render_rotation: RenderRotation,
-    revert_x_axis: bool,
-    revert_y_axis: bool,
 }
 
 pub struct GLES1OnGL2Context {
@@ -517,9 +511,6 @@ fn new_gles1_on_gl2_state() -> GLES1OnGL2State {
         palette_matrices: vec![MATRIX_IDENTITY; MATRIX_PALETTE_MIN_MATRICES],
         palette_weight_state: MatrixArrayPointerState::default(),
         palette_index_state: MatrixArrayPointerState::default(),
-        render_rotation: RenderRotation::Default,
-        revert_x_axis: false,
-        revert_y_axis: false,
     }
 }
 
@@ -551,9 +542,6 @@ impl GLESContext for GLES1OnGL2Context {
         }
         gl21::load_with(|s| window.gl_get_proc_address(s));
         self.is_loaded = true;
-        self.state.render_rotation = window.render_rotation();
-        self.state.revert_x_axis = window.revert_x_axis();
-        self.state.revert_y_axis = window.revert_y_axis();
 
         Box::new(GLES1OnGL2 {
             state: &mut self.state,
@@ -587,44 +575,10 @@ pub struct GLES1OnGL2<'a> {
 
 impl GLES1OnGL2<'_> {
     unsafe fn begin_render_transform(&self) -> Option<GLenum> {
-        if self.state.render_rotation == RenderRotation::Default
-            && !self.state.revert_x_axis
-            && !self.state.revert_y_axis
-        {
-            return None;
-        }
-        let previous_mode = match self.state.matrix_mode {
-            MatrixModeState::Projection => gl21::PROJECTION,
-            MatrixModeState::Texture => gl21::TEXTURE,
-            _ => gl21::MODELVIEW,
-        };
-        let logger = GLES1to2Logger::new("render-transform", "gles1-on-gl2");
-        let mut correction = [
-            1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
-        ];
-        correction = apply_render_rotation(&mut correction, self.state.render_rotation, &logger);
-        correction = apply_axis_reverts(
-            &mut correction,
-            self.state.revert_x_axis,
-            self.state.revert_y_axis,
-            &logger,
-        );
-        gl21::MatrixMode(gl21::PROJECTION);
-        gl21::PushMatrix();
-        let mut projection = [0.0; 16];
-        gl21::GetFloatv(gl21::PROJECTION_MATRIX, projection.as_mut_ptr());
-        gl21::LoadMatrixf(correction.as_ptr());
-        gl21::MultMatrixf(projection.as_ptr());
-        Some(previous_mode)
+        None
     }
 
-    unsafe fn end_render_transform(&self, previous_mode: Option<GLenum>) {
-        if let Some(previous_mode) = previous_mode {
-            gl21::MatrixMode(gl21::PROJECTION);
-            gl21::PopMatrix();
-            gl21::MatrixMode(previous_mode);
-        }
-    }
+    unsafe fn end_render_transform(&self, _previous_mode: Option<GLenum>) {}
 
     /// If any arrays with fixed-point data are in use at the time of a draw
     /// call, this function will convert the data to floating-point and
@@ -3064,8 +3018,7 @@ impl GLES for GLES1OnGL2<'_> {
             }
             return;
         }
-        let mut values: [GLfloat; 16] = std::slice::from_raw_parts(m, 16).try_into().unwrap();
-        crate::gles::correct_inverted_ortho_matrix(&mut values);
+        let values: [GLfloat; 16] = std::slice::from_raw_parts(m, 16).try_into().unwrap();
         gl21::LoadMatrixf(values.as_ptr());
     }
     unsafe fn LoadMatrixx(&mut self, m: *const GLfixed) {
@@ -3116,8 +3069,6 @@ impl GLES for GLES1OnGL2<'_> {
         near: GLfloat,
         far: GLfloat,
     ) {
-        let (left, right, bottom, top) =
-            crate::gles::normalize_inverted_ortho_bounds(left, right, bottom, top);
         gl21::Ortho(
             left.into(),
             right.into(),

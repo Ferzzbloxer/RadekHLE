@@ -1704,7 +1704,7 @@ unsafe fn present_renderbuffer(env: &mut Environment, drawable: id) {
         );
         crate::matrix::Matrix::<2>::identity()
     } else {
-        env.window.as_mut().unwrap().rotation_matrix()
+        env.window.as_mut().unwrap().presentation_matrix()
     };
     if std::env::var_os("TOUCHHLE_TRANSLATOR_DISABLE_ROTATION").is_some() {
         log_once_fmt!(
