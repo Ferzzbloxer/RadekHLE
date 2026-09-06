@@ -2753,10 +2753,9 @@ impl GLES for GLES1OnGLES3<'_> {
         self.state.matrix_mut().current = MATRIX_IDENTITY;
     }
     unsafe fn LoadMatrixf(&mut self, m: *const GLfloat) {
-        self.state
-            .matrix_mut()
-            .current
-            .copy_from_slice(std::slice::from_raw_parts(m, 16));
+        let mut values: [GLfloat; 16] = std::slice::from_raw_parts(m, 16).try_into().unwrap();
+        crate::gles::correct_inverted_ortho_matrix(&mut values);
+        self.state.matrix_mut().current = values;
     }
     unsafe fn LoadMatrixx(&mut self, m: *const GLfixed) {
         let mut out = [0.0; 16];
@@ -2796,6 +2795,7 @@ impl GLES for GLES1OnGLES3<'_> {
         n: GLfloat,
         f: GLfloat,
     ) {
+        let (l, r, b, t) = crate::gles::normalize_inverted_ortho_bounds(l, r, b, t);
         let a = self.state.matrix_mut().current;
         self.state.matrix_mut().current = multiply(&a, &ortho(l, r, b, t, n, f));
     }

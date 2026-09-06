@@ -1435,12 +1435,17 @@ impl GLES for GLES1OnGLES2<'_> {
     }
     unsafe fn LoadMatrixf(&mut self, m: *const GLfloat) {
         let logger = GLES1to2Logger::new("glLoadMatrixf", "matrix state");
-        let values: [GLfloat; 16] = std::slice::from_raw_parts(m, 16).try_into().unwrap();
+        let mut values: [GLfloat; 16] = std::slice::from_raw_parts(m, 16).try_into().unwrap();
+        let corrected = crate::gles::correct_inverted_ortho_matrix(&mut values);
         self.state.matrix_mut().current = values;
         log_matrix_operation("glLoadMatrixf", format!("mode={}", matrix_mode_name(self.state.matrix_mode)));
         log_matrix_result("glLoadMatrixf", &values);
         if self.state.matrix_mode == es1::PROJECTION {
             crate::gles::gles1_on_gles2_logging::log_projection_matrix("glLoadMatrixf", &values);
+            crate::gles::log_ortho_matrix_details(&values, "after glLoadMatrixf");
+        }
+        if corrected {
+            log!("[ORTHO PROJECTION CORRECTION] GLES1-on-GLES2 glLoadMatrixf corrected");
         }
         logger.log_matrix("result", &values, false);
         logger.finish();
@@ -1508,11 +1513,13 @@ impl GLES for GLES1OnGLES2<'_> {
     }
     unsafe fn Orthof(&mut self, l: GLfloat, r: GLfloat, b: GLfloat, t: GLfloat, n: GLfloat, f: GLfloat) {
         let logger = GLES1to2Logger::new("glOrthof", "projection");
+        let (l, r, b, t) = crate::gles::normalize_inverted_ortho_bounds(l, r, b, t);
         let a = self.state.matrix_mut().current;
         self.state.matrix_mut().current = multiply(&a, &ortho(l, r, b, t, n, f));
         log_matrix_operation("glOrthof", format!("left={l}, right={r}, bottom={b}, top={t}, near={n}, far={f}"));
         let current = self.state.matrix_mut().current;
         log_matrix_result("glOrthof", &current);
+        crate::gles::log_ortho_matrix_details(&current, "after glOrthof");
         logger.log_projection("glOrthof", (l as f64, r as f64, b as f64, t as f64, n as f64, f as f64), None);
         logger.log_matrix("result", &current, false);
         logger.finish();

@@ -3064,7 +3064,9 @@ impl GLES for GLES1OnGL2<'_> {
             }
             return;
         }
-        gl21::LoadMatrixf(m);
+        let mut values: [GLfloat; 16] = std::slice::from_raw_parts(m, 16).try_into().unwrap();
+        crate::gles::correct_inverted_ortho_matrix(&mut values);
+        gl21::LoadMatrixf(values.as_ptr());
     }
     unsafe fn LoadMatrixx(&mut self, m: *const GLfixed) {
         let matrix = matrix_fixed_to_float(m);
@@ -3114,6 +3116,8 @@ impl GLES for GLES1OnGL2<'_> {
         near: GLfloat,
         far: GLfloat,
     ) {
+        let (left, right, bottom, top) =
+            crate::gles::normalize_inverted_ortho_bounds(left, right, bottom, top);
         gl21::Ortho(
             left.into(),
             right.into(),

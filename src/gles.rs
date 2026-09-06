@@ -612,3 +612,94 @@ pub fn create_gles1_ctx_no_parent_stack(
     }
     gles1_ctx.expect("Couldn't create OpenGL ES 1.1 context!")
 }
+
+pub(crate) fn normalize_inverted_ortho_bounds(
+    left: f32,
+    right: f32,
+    bottom: f32,
+    top: f32,
+) -> (f32, f32, f32, f32) {
+    let exact_legacy_inversion = left.abs() < f32::EPSILON
+        && right < 0.0
+        && bottom < 0.0
+        && top.abs() < f32::EPSILON;
+    if exact_legacy_inversion {
+        log!(
+            "[ORTHO PROJECTION CORRECTION] inverted bounds detected: left={left}, right={right}, bottom={bottom}, top={top}; correcting to positive drawable bounds"
+        );
+        (left, -right, 0.0, -bottom)
+    } else {
+        (left, right, bottom, top)
+    }
+}
+
+pub(crate) fn correct_inverted_ortho_matrix(matrix: &mut [f32; 16]) -> bool {
+    let diagonal = matrix[1].abs() < 0.0001
+        && matrix[2].abs() < 0.0001
+        && matrix[3].abs() < 0.0001
+        && matrix[4].abs() < 0.0001
+        && matrix[6].abs() < 0.0001
+        && matrix[7].abs() < 0.0001
+        && matrix[8].abs() < 0.0001
+        && matrix[9].abs() < 0.0001
+        && matrix[11].abs() < 0.0001
+        && (matrix[15] - 1.0).abs() < 0.0001;
+    if diagonal
+        && matrix[0].is_finite()
+        && matrix[5].is_finite()
+        && matrix[0] < 0.0
+        && matrix[5] < 0.0
+        && matrix[12] > 0.5
+        && matrix[13] < -0.5
+    {
+        let width = 2.0 / -matrix[0];
+        let height = 2.0 / -matrix[5];
+        if width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0 {
+            log!(
+                "[ORTHO PROJECTION CORRECTION] loaded inverted matrix implies left=0, right={width:.2}, bottom=0, top={height:.2}"
+            );
+            matrix[0] = -matrix[0];
+            matrix[5] = -matrix[5];
+            matrix[12] = -1.0;
+            matrix[13] = -1.0;
+            return true;
+        }
+    }
+    false
+}
+
+pub(crate) fn log_ortho_matrix_details(matrix: &[f32; 16], label: &str) {
+    let scale_x = matrix[0];
+    let scale_y = matrix[5];
+    let scale_z = matrix[10];
+    let trans_x = matrix[12];
+    let trans_y = matrix[13];
+    log!(
+        "[ORTHO MATRIX VERIFICATION] {label}: scale=({scale_x:.6}, {scale_y:.6}, {scale_z:.6}) translation=({trans_x:.6}, {trans_y:.6}, {:.6})",
+        matrix[14]
+    );
+    if scale_x.abs() > f32::EPSILON && scale_y.abs() > f32::EPSILON {
+        let width = 2.0 / scale_x;
+        let height = 2.0 / scale_y;
+        let left = -trans_x / scale_x - width / 2.0;
+        let right = left + width;
+        let bottom = -trans_y / scale_y - height / 2.0;
+        let top = bottom + height;
+        let x_orientation = if right >= left { "normal" } else { "inverted" };
+        let y_orientation = if top >= bottom { "normal" } else { "Y-flipped" };
+        log!(
+            "[ORTHO MATRIX VERIFICATION] bounds: left={left:.2}, right={right:.2}, bottom={bottom:.2}, top={top:.2}, x_axis={x_orientation}, y_axis={y_orientation}"
+        );
+        log!(
+            "[ORTHO MATRIX VERIFICATION] validation: right_positive={}, bottom_nonnegative={}, top_positive={}"
+            , right > 0.0, bottom >= 0.0, top > 0.0
+        );
+    }
+    log!(
+        "[ORTHO MATRIX VERIFICATION] matrix=[{:.4} {:.4} {:.4} {:.4}; {:.4} {:.4} {:.4} {:.4}; {:.4} {:.4} {:.4} {:.4}; {:.4} {:.4} {:.4} {:.4}]",
+        matrix[0], matrix[4], matrix[8], matrix[12],
+        matrix[1], matrix[5], matrix[9], matrix[13],
+        matrix[2], matrix[6], matrix[10], matrix[14],
+        matrix[3], matrix[7], matrix[11], matrix[15]
+    );
+}

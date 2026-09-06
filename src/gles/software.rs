@@ -1783,9 +1783,9 @@ impl GLES for SoftwareGLES<'_> {
         if matrix.is_null() {
             self.state.error(gl::INVALID_VALUE);
         } else {
-            self.state
-                .matrix_mut()
-                .copy_from_slice(std::slice::from_raw_parts(matrix, 16));
+            let mut values: [GLfloat; 16] = std::slice::from_raw_parts(matrix, 16).try_into().unwrap();
+            crate::gles::correct_inverted_ortho_matrix(&mut values);
+            self.state.matrix_mut().copy_from_slice(&values);
         }
     }
     unsafe fn LoadMatrixx(&mut self, matrix: *const GLfixed) {
@@ -1827,6 +1827,8 @@ impl GLES for SoftwareGLES<'_> {
         near: GLfloat,
         far: GLfloat,
     ) {
+        let (left, right, bottom, top) =
+            crate::gles::normalize_inverted_ortho_bounds(left, right, bottom, top);
         let mut m = [0.0; 16];
         m[0] = 2.0 / (right - left);
         m[5] = 2.0 / (top - bottom);
