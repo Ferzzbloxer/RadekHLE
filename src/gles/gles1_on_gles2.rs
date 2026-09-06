@@ -415,17 +415,12 @@ impl GLESContext for GLES1OnGLES2Context {
         }
         let logical_framebuffer_size = window.framebuffer_size();
         let drawable_size = window.drawable_size();
-        if coordinate_trace_enabled() {
-            log!(
-                "[GLES1→GLES2 WINDOW] orientation={:?} logical_framebuffer={}x{} drawable={}x{} viewport={:?}",
-                window.current_rotation(),
-                logical_framebuffer_size.0,
-                logical_framebuffer_size.1,
-                drawable_size.0,
-                drawable_size.1,
-                window.viewport(),
-            );
-        }
+        crate::gles::gles1_on_gles2_logging::log_window_state(
+            &format!("{:?}", window.current_rotation()),
+            logical_framebuffer_size,
+            drawable_size,
+        );
+        crate::gles::gles1_on_gles2_logging::trace_viewport_usage("window log generation");
         self.state.actual_window_size = drawable_size;
         self.state.render_rotation = window.render_rotation();
         self.state.revert_x_axis = window.revert_x_axis();
@@ -1572,38 +1567,25 @@ impl GLES for GLES1OnGLES2<'_> {
     unsafe fn Viewport(&mut self, x: GLint, y: GLint, w: GLsizei, h: GLsizei) {
         let logger = GLES1to2Logger::new("glViewport", "viewport");
         let (requested_x, requested_y, requested_w, requested_h) = (x, y, w, h);
+        crate::gles::gles1_on_gles2_logging::trace_viewport_usage("glViewport entry");
         let (x, y, w, h) = apply_viewport(x, y, w, h);
-        logger.log_viewport(
-            requested_x,
-            requested_y,
-            requested_w.max(0) as u32,
-            requested_h.max(0) as u32,
-            Some((x, y, w.max(0) as u32, h.max(0) as u32)),
-        );
+        crate::gles::gles1_on_gles2_logging::update_viewport_state((x, y, w, h));
+        logger.log_viewport(requested_x, requested_y, requested_w.max(0) as u32, requested_h.max(0) as u32, Some((x, y, w.max(0) as u32, h.max(0) as u32)));
         if !self.state.first_viewport_logged {
-            log!(
-                "[GLES1→GLES2 VIEWPORT FIX] version={} requested=({}, {}, {}, {}) applied=({}, {}, {}, {}) actual_window={}x{}",
-                VIEWPORT_FIX_VERSION,
-                requested_x,
-                requested_y,
-                requested_w,
-                requested_h,
-                x,
-                y,
-                w,
-                h,
-                self.state.actual_window_size.0,
-                self.state.actual_window_size.1,
-            );
+            log!("[GLES1→GLES2 VIEWPORT FIX] version={} requested=({}, {}, {}, {}) applied=({}, {}, {}, {}) actual_window={}x{}", VIEWPORT_FIX_VERSION, requested_x, requested_y, requested_w, requested_h, x, y, w, h, self.state.actual_window_size.0, self.state.actual_window_size.1);
             self.state.first_viewport_logged = true;
         }
         log_viewport(self.state.actual_window_size.0, self.state.actual_window_size.1, x, y, w, h);
         self.state.viewport = [x, y, w, h];
+        crate::gles::gles1_on_gles2_logging::trace_viewport_usage("before gl::Viewport");
         gl::Viewport(x, y, w, h);
+        crate::gles::gles1_on_gles2_logging::trace_viewport_usage("after gl::Viewport");
+        crate::gles::gles1_on_gles2_logging::verify_viewport_state_in_gpu();
         logger.finish();
     }
     unsafe fn Scissor(&mut self, x: GLint, y: GLint, w: GLsizei, h: GLsizei) {
         let logger = GLES1to2Logger::new("glScissor", "scissor state");
+        crate::gles::gles1_on_gles2_logging::update_scissor_state((x, y, w, h));
         logger.log_stage("INPUT", &format!("rect=({}, {}, {}, {})", x, y, w, h));
         gl::Scissor(x, y, w, h);
         logger.log_stage("BACKEND", "OpenGL glScissor completed");
@@ -1745,6 +1727,7 @@ impl GLES for GLES1OnGLES2<'_> {
             None => return,
         };
         gl::UseProgram(program);
+        crate::gles::gles1_on_gles2_logging::trace_viewport_usage("before matrix transformation");
         let mvp = self.state.mvp();
         log_matrix("Final GLES2 projection/MVP upload", &mvp);
         diagnose_matrix_conversion(&self.state.projection.current, &mvp);
@@ -1833,6 +1816,7 @@ impl GLES for GLES1OnGLES2<'_> {
             let vertex = [raw.read_unaligned(), if components > 1 { raw.add(1).read_unaligned() } else { 0.0 }, if components > 2 { raw.add(2).read_unaligned() } else { 0.0 }];
             log_vertex_transformation(vertex, transform_vec4(&mvp, [vertex[0], vertex[1], vertex[2], 1.0]));
         }
+        crate::gles::gles1_on_gles2_logging::trace_viewport_usage("before rendering DrawArrays");
         gl::DrawArrays(mode, first, count);
         gl::BindBuffer(gl::ARRAY_BUFFER, self.state.array_buffer_binding);
     }
@@ -1842,6 +1826,7 @@ impl GLES for GLES1OnGLES2<'_> {
             None => return,
         };
         gl::UseProgram(program);
+        crate::gles::gles1_on_gles2_logging::trace_viewport_usage("before matrix transformation");
         let mvp = self.state.mvp();
         log_matrix("Final GLES2 projection/MVP upload", &mvp);
         diagnose_matrix_conversion(&self.state.projection.current, &mvp);
@@ -1898,6 +1883,7 @@ impl GLES for GLES1OnGLES2<'_> {
         if coordinate_trace_enabled() {
             log_matrix("GLES2 indexed draw matrix", &mvp);
         }
+        crate::gles::gles1_on_gles2_logging::trace_viewport_usage("before rendering DrawElements");
         let (draw_indices, restore_element_buffer) = self.stage_client_indices(type_, indices, count);
         gl::DrawElements(mode, count, type_, draw_indices);
         if restore_element_buffer {

@@ -1,4 +1,6 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use crate::gles::gles2_raw as gl;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
 static INITIALIZATION_LOGGED: AtomicBool = AtomicBool::new(false);
@@ -293,4 +295,72 @@ fn determinant(matrix: &[f32; 16]) -> f32 {
             * (m(1, 0) * (m(2, 1) * m(3, 2) - m(2, 2) * m(3, 1))
                 - m(1, 1) * (m(2, 0) * m(3, 2) - m(2, 2) * m(3, 0))
                 + m(1, 2) * (m(2, 0) * m(3, 1) - m(2, 1) * m(3, 0)))
+}
+
+struct ViewportStateGlobal {
+    current_viewport: (i32, i32, i32, i32),
+    current_scissor: (i32, i32, i32, i32),
+    last_updated: Instant,
+}
+
+static VIEWPORT_STATE_GLOBAL: OnceLock<Mutex<ViewportStateGlobal>> = OnceLock::new();
+static WINDOW_LOG_COUNT: AtomicU64 = AtomicU64::new(0);
+
+fn viewport_state() -> &'static Mutex<ViewportStateGlobal> {
+    VIEWPORT_STATE_GLOBAL.get_or_init(|| Mutex::new(ViewportStateGlobal {
+        current_viewport: (0, 0, 0, 0),
+        current_scissor: (0, 0, 0, 0),
+        last_updated: Instant::now(),
+    }))
+}
+
+pub fn log_viewport_state_change(old_viewport: (i32, i32, i32, i32), new_viewport: (i32, i32, i32, i32)) {
+    if !enabled() || old_viewport == new_viewport {
+        return;
+    }
+    log!("[VIEWPORT STATE CHANGE] old=({},{},{},{}) new=({},{},{},{}) size_changed={} position_changed={}", old_viewport.0, old_viewport.1, old_viewport.2, old_viewport.3, new_viewport.0, new_viewport.1, new_viewport.2, new_viewport.3, old_viewport.2 != new_viewport.2 || old_viewport.3 != new_viewport.3, old_viewport.0 != new_viewport.0 || old_viewport.1 != new_viewport.1);
+}
+
+pub fn update_viewport_state(viewport: (i32, i32, i32, i32)) {
+    let mut state = viewport_state().lock().unwrap();
+    let old = state.current_viewport;
+    state.current_viewport = viewport;
+    state.last_updated = Instant::now();
+    drop(state);
+    log_viewport_state_change(old, viewport);
+    if enabled() {
+        log!("[VIEWPORT STATE UPDATED] x={}, y={}, w={}, h={}", viewport.0, viewport.1, viewport.2, viewport.3);
+    }
+}
+
+pub fn update_scissor_state(scissor: (i32, i32, i32, i32)) {
+    let mut state = viewport_state().lock().unwrap();
+    state.current_scissor = scissor;
+    state.last_updated = Instant::now();
+}
+
+pub fn trace_viewport_usage(label: &str) {
+    if !enabled() {
+        return;
+    }
+    let state = viewport_state().lock().unwrap();
+    log!("[VIEWPORT TRACE] {}: current=({},{},{},{})", label, state.current_viewport.0, state.current_viewport.1, state.current_viewport.2, state.current_viewport.3);
+}
+
+pub fn verify_viewport_state_in_gpu() {
+    if !enabled() {
+        return;
+    }
+    let mut viewport = [0i32; 4];
+    unsafe { gl::GetIntegerv(gl::VIEWPORT, viewport.as_mut_ptr()); }
+    log!("[GPU VIEWPORT STATE] x={} y={} width={} height={}", viewport[0], viewport[1], viewport[2], viewport[3]);
+}
+
+pub fn log_window_state(orientation: &str, logical: (u32, u32), drawable: (u32, u32)) {
+    if !enabled() {
+        return;
+    }
+    let count = WINDOW_LOG_COUNT.fetch_add(1, Ordering::SeqCst);
+    let state = viewport_state().lock().unwrap();
+    log!("[GLES1→GLES2 WINDOW #{:06}] orientation={} logical_framebuffer={}x{} drawable={}x{} viewport=({},{},{},{}) scissor=({},{},{},{}) age_ms={}", count, orientation, logical.0, logical.1, drawable.0, drawable.1, state.current_viewport.0, state.current_viewport.1, state.current_viewport.2, state.current_viewport.3, state.current_scissor.0, state.current_scissor.1, state.current_scissor.2, state.current_scissor.3, state.last_updated.elapsed().as_millis());
 }
