@@ -247,6 +247,9 @@ impl TranslatorState {
     fn mvp(&self) -> [GLfloat; 16] {
         let mut matrix = apply_projection_fix(multiply(&self.projection.current, &self.modelview.current));
         let logger = GLES1to2Logger::new("mvp_upload", "GLES2 vertex shader");
+        logger.log_matrix("projection_input", &self.projection.current, true);
+        logger.log_matrix("modelview_input", &self.modelview.current, true);
+        logger.log_matrix("projection_modelview", &matrix, true);
         let mut result = MatrixFixer::apply_all_fixes(&mut matrix, &logger);
         result = apply_render_rotation(&mut result, self.render_rotation, &logger);
         result = apply_axis_reverts(
@@ -255,6 +258,7 @@ impl TranslatorState {
             self.revert_y_axis,
             &logger,
         );
+        logger.log_matrix("mvp_final", &result, false);
         logger.finish();
         result
     }
@@ -1451,13 +1455,24 @@ impl GLES for GLES1OnGLES2<'_> {
         logger.finish();
     }
     unsafe fn LoadMatrixx(&mut self, m: *const GLfixed) {
+        let logger = GLES1to2Logger::new("glLoadMatrixx", "matrix state");
         let mut out = [0.0; 16];
         for (d, s) in out.iter_mut().zip(std::slice::from_raw_parts(m, 16)) {
             *d = fixed_to_float(*s);
         }
+        let corrected = crate::gles::correct_inverted_ortho_matrix(&mut out);
         self.state.matrix_mut().current = out;
         log_matrix_operation("glLoadMatrixx", format!("mode={}", matrix_mode_name(self.state.matrix_mode)));
         log_matrix_result("glLoadMatrixx", &out);
+        if self.state.matrix_mode == es1::PROJECTION {
+            crate::gles::gles1_on_gles2_logging::log_projection_matrix("glLoadMatrixx", &out);
+            crate::gles::log_ortho_matrix_details(&out, "after glLoadMatrixx");
+        }
+        if corrected {
+            log!("[ORTHO PROJECTION CORRECTION] GLES1-on-GLES2 glLoadMatrixx corrected");
+        }
+        logger.log_matrix("result", &out, false);
+        logger.finish();
     }
     unsafe fn MultMatrixf(&mut self, m: *const GLfloat) {
         let logger = GLES1to2Logger::new("glMultMatrixf", "matrix state");

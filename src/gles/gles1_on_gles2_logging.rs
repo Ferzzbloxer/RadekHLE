@@ -60,10 +60,22 @@ impl GLES1to2Logger {
         let x_scale = column_length(matrix, 0);
         let y_scale = column_length(matrix, 1);
         let z_scale = column_length(matrix, 2);
+        let det = determinant(matrix);
+        let largest_scale = x_scale.max(y_scale).max(z_scale);
+        let scale_tolerance = (largest_scale * 0.01).max(0.0001);
+        let uniform_scale = (x_scale - y_scale).abs() <= scale_tolerance
+            && (y_scale - z_scale).abs() <= scale_tolerance;
+        let orientation = if det < -0.000001 {
+            "mirrored"
+        } else if det.abs() <= 0.000001 {
+            "singular"
+        } else {
+            "normal"
+        };
         log!(
             "[GLES1→GLES2 MATRIX_PROPERTIES] op={} determinant={:.6} trace={:.6} scale=({:.6},{:.6},{:.6}) translation=({:.6},{:.6},{:.6})",
             self.operation_id,
-            determinant(matrix),
+            det,
             matrix[0] + matrix[5] + matrix[10] + matrix[15],
             x_scale,
             y_scale,
@@ -71,6 +83,17 @@ impl GLES1to2Logger {
             matrix[12],
             matrix[13],
             matrix[14]
+        );
+        log!(
+            "[GLES1→GLES2 MATRIX_VALIDATION] op={} uniform_scale={} orientation={} finite={} affine_bottom_row={:.6},{:.6},{:.6},{:.6}",
+            self.operation_id,
+            uniform_scale,
+            orientation,
+            matrix.iter().all(|value| value.is_finite()),
+            matrix[3],
+            matrix[7],
+            matrix[11],
+            matrix[15]
         );
     }
 
@@ -170,6 +193,13 @@ impl GLES1to2Logger {
             before_aspect
         );
         if let Some((fixed_x, fixed_y, fixed_width, fixed_height)) = after_fix {
+            let fixed_aspect = aspect(fixed_width, fixed_height);
+            let valid = fixed_x >= 0
+                && fixed_y >= 0
+                && fixed_width > 0
+                && fixed_height > 0
+                && fixed_width <= i32::MAX as u32
+                && fixed_height <= i32::MAX as u32;
             log!(
                 "[GLES1→GLES2 VIEWPORT] op={} after=({},{},{},{}) after_aspect={:.6}",
                 self.operation_id,
@@ -177,7 +207,14 @@ impl GLES1to2Logger {
                 fixed_y,
                 fixed_width,
                 fixed_height,
-                aspect(fixed_width, fixed_height)
+                fixed_aspect
+            );
+            log!(
+                "[GLES1→GLES2 VIEWPORT_VALIDATION] op={} positive_bounds={} aspect_finite={} aspect={:.6}",
+                self.operation_id,
+                valid,
+                fixed_aspect.is_finite(),
+                fixed_aspect
             );
         }
     }
