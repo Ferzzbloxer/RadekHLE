@@ -254,6 +254,21 @@ pub fn AudioQueueNewOutput(
         offline_render_format: None,
     };
 
+    let format_id = format.format_id;
+    let sample_rate = format.sample_rate;
+    let channels = format.channels_per_frame;
+    let bytes_per_frame = format.bytes_per_frame;
+    let bits_per_channel = format.bits_per_channel;
+    log!(
+        "AudioQueueNewOutput: queue format id={:?}, rate={:.1} Hz, channels={}, bytes_per_frame={}, bits={}, callback={:?}",
+        format_id,
+        sample_rate,
+        channels,
+        bytes_per_frame,
+        bits_per_channel,
+        in_callback_proc
+    );
+
     let aq_ref = env.mem.alloc_and_write(OpaqueAudioQueue { _filler: 0 });
     State::get(&mut env.framework_state)
         .audio_queues
@@ -1396,21 +1411,27 @@ fn prime_audio_queue(env: &mut Environment, in_aq: AudioQueueRef) {
             break;
         }
 
-        let (al_format, al_frequency, data) = decode_buffer(
+        let (al_format, al_frequency, mut data) = decode_buffer(
             &env.mem,
             &host_object.format,
             next_buffer.audio_data.cast(),
             next_buffer.audio_data_byte_size,
         );
-        let supplied_frames = frames_for_audio_bytes(&host_object.format, data.len());
-        host_object.supplied_frames = host_object.supplied_frames.saturating_add(supplied_frames);
 
         if data.is_empty() {
             record_audio_queue_underrun(host_object, in_aq, std::time::Instant::now());
-            host_object.al_unused_buffers.push(next_al_buffer);
-            log!("Warning: audio queue {:?}: decoder returned no PCM data; stopping refill for this tick.", in_aq);
-            break;
+            let channels = host_object.format.channels_per_frame.clamp(1, 2) as usize;
+            let silence_frames = 1024usize;
+            data.resize(silence_frames * channels * 2, 0);
+            log_dbg!(
+                "AudioQueue {:?}: decoder produced no PCM; queueing {} frames of silence to keep playback alive",
+                in_aq,
+                silence_frames
+            );
         }
+
+        let supplied_frames = frames_for_audio_bytes(&host_object.format, data.len());
+        host_object.supplied_frames = host_object.supplied_frames.saturating_add(supplied_frames);
 
         unsafe {
             context.BufferData(
@@ -1434,6 +1455,40 @@ fn prime_audio_queue(env: &mut Environment, in_aq: AudioQueueRef) {
             );
             host_object.al_unused_buffers.push(next_al_buffer);
             break;
+        }
+    }
+
+    if host_object.is_running == AudioQueueIsRunning::Running {
+        let mut source_state = 0;
+        let mut queued = 0;
+        unsafe {
+            context.GetSourcei(al_source, al::AL_SOURCE_STATE, &mut source_state);
+            context.GetSourcei(al_source, al::AL_BUFFERS_QUEUED, &mut queued);
+            let error = context.GetError();
+            if error == 0 && queued > 0 && source_state != al::AL_PLAYING {
+                context.SourcePlay(al_source);
+                let restart_error = context.GetError();
+                if restart_error != 0 {
+                    log!(
+                        "Warning: audio queue {:?} could not restart after an underrun: {:#x}",
+                        in_aq,
+                        restart_error
+                    );
+                } else {
+                    log!(
+                        "AudioQueue {:?}: restarted OpenAL source after underrun (queued={}, previous_state={:#x})",
+                        in_aq,
+                        queued,
+                        source_state
+                    );
+                }
+            } else if error != 0 {
+                log!(
+                    "Warning: audio queue {:?} source-state query failed: {:#x}",
+                    in_aq,
+                    error
+                );
+            }
         }
     }
 }
@@ -1693,6 +1748,13 @@ pub fn AudioQueueStart(
 
     if is_supported_audio_format(&host_object.format) {
         host_object.is_running = AudioQueueIsRunning::Running;
+
+        log!(
+            "AudioQueueStart: queue={:?}, guest_buffers={}, openal_source={:?}",
+            in_aq,
+            host_object.buffer_queue.len(),
+            host_object.al_source
+        );
 
         let Some(al_source) = host_object.al_source else {
             // prime_audio_queue should have created the OpenAL source, but

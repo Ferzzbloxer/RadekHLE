@@ -24,6 +24,7 @@
 
 use al_sys::alc_types::{ALCcontext, ALCdevice};
 use std::marker::PhantomData;
+use std::ffi::CStr;
 use touchHLE_openal_soft_wrapper as al_sys;
 use touchHLE_openal_soft_wrapper::alc_types::ALCint;
 
@@ -77,8 +78,15 @@ fn ensure_openal_backend_available() {
 
     if cfg!(target_os = "linux") && std::env::var_os("TOUCHHLE_PULSE_AUDIO").is_some() {
         if std::env::var_os("ALSOFT_DRIVERS").is_none() {
-            unsafe { std::env::set_var("ALSOFT_DRIVERS", "pulse,alsa"); }
-            log!("Pulse audio mode enabled: OpenAL Soft backend preference set to pulse,alsa");
+            unsafe {
+                std::env::set_var("ALSOFT_DRIVERS", "pulse,alsa");
+                std::env::set_var("ALSOFT_MIXER_THREADS", "1");
+                std::env::set_var("ALSOFT_PERIODS", "4");
+                std::env::set_var("ALSOFT_PERIOD_SIZE", "1024");
+                std::env::set_var("ALSOFT_BUFFER_SIZE", "4096");
+                std::env::set_var("ALSOFT_HRTF", "off");
+            }
+            log!("Pulse audio mode enabled: OpenAL Soft configured for pulse,alsa with a 4-period 4096-frame playback buffer");
         }
     }
 
@@ -140,6 +148,24 @@ impl Drop for OpenALManager {
     }
 }
 
+fn log_openal_device(device: *mut ALCdevice) {
+    if device.is_null() {
+        return;
+    }
+    let name = unsafe { al_sys::alcGetString(device, ALC_DEVICE_SPECIFIER) };
+    let name = if name.is_null() {
+        "<unknown>".to_string()
+    } else {
+        unsafe { CStr::from_ptr(name.cast()).to_string_lossy().into_owned() }
+    };
+    log!(
+        "OpenAL audio device selected: {:?}; driver preference={:?}; device={}",
+        device,
+        std::env::var("ALSOFT_DRIVERS").unwrap_or_else(|_| "host default".to_string()),
+        name
+    );
+}
+
 #[derive(Debug)]
 pub struct OpenALContext {
     context: *mut ALCcontext,
@@ -173,6 +199,7 @@ impl OpenALContext {
                 );
             }
         }
+        log_openal_device(device);
         match unsafe { Self::new_with_device_and_attrlist(_manager, device, std::ptr::null()) } {
             Ok(ctx) => Ok(ctx),
             Err(e) => {
@@ -215,10 +242,13 @@ impl OpenALContext {
         if context.is_null() {
             return Err("Could not open OpenAL context".to_string());
         }
-        log_dbg!(
-            "New OpenAL device ({:?}) and context ({:?})",
+        log!(
+            "OpenAL context created: device={:?}, context={:?}, pulse_mode={}, mixer_threads={:?}, buffer_size={:?}",
             device,
-            context
+            context,
+            std::env::var_os("TOUCHHLE_PULSE_AUDIO").is_some(),
+            std::env::var("ALSOFT_MIXER_THREADS").ok(),
+            std::env::var("ALSOFT_BUFFER_SIZE").ok(),
         );
         Ok(Self { context, device })
     }
