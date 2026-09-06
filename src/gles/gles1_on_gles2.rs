@@ -391,8 +391,10 @@ impl GLESContext for GLES1OnGLES2Context {
     }
 
     fn new(window: &mut Window) -> Result<Self, String> {
+        gles1_on_gles2_logging::reset_state();
         gles1_on_gles2_logging::instrument_rendering_pipeline();
         gles1_on_gles2_logging::log_initialization(rotation_fix_mode().as_str());
+        gles1_on_gles2_logging::log_gl_state_initialized();
         let mut state = TranslatorState::new();
         state.render_rotation = window.render_rotation();
         state.revert_x_axis = window.revert_x_axis();
@@ -1580,7 +1582,6 @@ impl GLES for GLES1OnGLES2<'_> {
     unsafe fn Viewport(&mut self, x: GLint, y: GLint, w: GLsizei, h: GLsizei) {
         let logger = GLES1to2Logger::new("glViewport", "viewport");
         let (requested_x, requested_y, requested_w, requested_h) = (x, y, w, h);
-        crate::gles::gles1_on_gles2_logging::trace_viewport_usage("glViewport entry");
         let (x, y, w, h) = apply_viewport(x, y, w, h);
         crate::gles::gles1_on_gles2_logging::update_viewport_state((x, y, w, h));
         let synced_scissor = crate::gles::gles1_on_gles2_logging::sync_scissor_to_viewport();
