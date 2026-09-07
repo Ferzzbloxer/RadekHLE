@@ -52,7 +52,6 @@ const MAX_ARM64_PTHREAD_WORKERS: usize = 16;
 pub enum A64GraphicsBackend {
     MetalCompatibility,
     OpenGLESCompatibility,
-    SoftwareCompatibility,
 }
 
 impl A64GraphicsBackend {
@@ -60,7 +59,6 @@ impl A64GraphicsBackend {
         match self {
             Self::MetalCompatibility => "Metal compatibility",
             Self::OpenGLESCompatibility => "OpenGL ES compatibility",
-            Self::SoftwareCompatibility => "software compatibility",
         }
     }
 }
@@ -68,9 +66,6 @@ impl A64GraphicsBackend {
 #[derive(Debug, Clone)]
 pub struct LoadedImage {
     pub name: String,
-    pub base: u64,
-    pub end: u64,
-    pub entry: Option<u64>,
     pub exports: HashMap<String, u64>,
 }
 
@@ -105,7 +100,6 @@ pub struct RuntimeState {
     pub reached_unimplemented_symbols: HashSet<String>,
     pub loaded_images: Vec<LoadedImage>,
     pub guest_transfer_pc: Option<u64>,
-    pub unity_framework_instance: Option<u64>,
     pub objc_classes: Vec<ObjCClass64>,
     pub class_objects: HashMap<String, u64>,
     pub application_object: Option<u64>,
@@ -238,7 +232,6 @@ impl RuntimeState {
             reached_unimplemented_symbols: HashSet::new(),
             loaded_images: Vec::new(),
             guest_transfer_pc: None,
-            unity_framework_instance: None,
             objc_classes: Vec::new(),
             class_objects: HashMap::new(),
             application_object: None,
@@ -315,17 +308,6 @@ impl RuntimeState {
         self.guest_transfer_pc.take()
     }
 
-    pub fn take_display_link_callback(&mut self) -> Option<(u64, u64, u64)> {
-        if !self.display_link_scheduled || self.display_link_callback_returned {
-            return None;
-        }
-        Some((
-            self.display_link_target?,
-            self.display_link_selector?,
-            self.display_link_object?,
-        ))
-    }
-
     pub fn mark_display_link_callback_started(&mut self) {
         self.display_link_return_pc = None;
         self.display_link_callbacks = self.display_link_callbacks.saturating_add(1);
@@ -375,15 +357,6 @@ impl RuntimeState {
 
     pub fn take_guest_yield(&mut self) -> bool {
         std::mem::take(&mut self.guest_yield_requested)
-    }
-
-    pub fn take_guest_gl_present_request(&mut self) -> bool {
-        std::mem::take(&mut self.arm64_gl_present_requested)
-    }
-
-    pub fn resolve_image_symbol(&self, candidates: &[&str]) -> Option<u64> {
-        self.find_image_symbol(candidates)
-            .map(|(_, address)| address)
     }
 
     fn find_image_symbol(&self, candidates: &[&str]) -> Option<(String, u64)> {

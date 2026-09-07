@@ -1239,7 +1239,7 @@ fn glRenderbufferStorageMultisampleAPPLE(
     let factor = env.options.scale_hack;
     let scale = |value: GLsizei| (value as f32 * factor).round() as GLsizei;
     let (width, height) = (scale(width), scale(height));
-    let samples = crate::gles::quality_options().2.max(1) as GLsizei;
+    let samples = crate::gles::anti_aliasing_samples().max(1) as GLsizei;
     with_ctx_and_mem(env, |gles, _mem| unsafe {
         gles.RenderbufferStorageMultisampleAPPLE(target, samples, internalformat, width, height)
     })

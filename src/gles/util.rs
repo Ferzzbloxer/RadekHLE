@@ -254,7 +254,7 @@ pub fn try_decode_pvrtc(
     let pixels =
         crate::image::decode_pvrtc_with_alpha(pvrtc_data, is_2bit, width_u, height_u, is_opaque);
     let (upload_pixels, upload_width, upload_height) =
-        upscale_rgba8_words(&pixels, width_u, height_u, crate::gles::quality_options().1)
+        upscale_rgba8_words(&pixels, width_u, height_u, crate::gles::texture_upscaler())
             .map_or((pixels, width_u, height_u), |value| value);
     unsafe {
         gles.TexImage2D(

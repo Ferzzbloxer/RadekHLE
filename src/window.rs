@@ -1236,10 +1236,8 @@ impl Window {
         options: &Options,
     ) -> Window {
         crate::gles::configure_quality_options(
-            options.anisotropic_filtering,
             options.texture_upscaler,
             options.anti_aliasing,
-            options.texture_filtering as u8,
             options.memory_management as u8,
         );
         let custom_driver_active =

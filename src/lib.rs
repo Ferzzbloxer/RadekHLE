@@ -27,8 +27,8 @@
 #[macro_use]
 mod log;
 mod a64_abi;
-mod a64_runtime;
 mod abi;
+mod arm64_runtime;
 mod audio;
 mod bundle;
 mod cpu;
@@ -200,9 +200,9 @@ pub fn main<T: Iterator<Item = String>>(mut args: T) -> Result<(), String> {
         for option_arg in &option_args {
             match options.parse_argument(option_arg) {
                 Ok(true) => (),
-                Ok(false) => log!("Warning: ignoring unknown generated option {option_arg:?}"),
+                Ok(false) => log!("Warning: ignoring unknown option {option_arg:?}"),
                 Err(error) => {
-                    log!("Warning: ignoring invalid generated option {option_arg:?}: {error}")
+                    log!("Warning: ignoring invalid option {option_arg:?}: {error}")
                 }
             }
         }
@@ -373,7 +373,7 @@ pub fn main<T: Iterator<Item = String>>(mut args: T) -> Result<(), String> {
 
     if required_device_capabilities.contains(&"opengles-3") {
         echo!(
-            "Warning: app requires OpenGL ES 3.0+ support. HyperHLE now routes EAGL OpenGL ES 3 contexts to its GLES 3 backend."
+            "Warning: app requires OpenGL ES 3.0+ support. RadekHLE now routes EAGL OpenGL ES 3 contexts to its GLES 3 backend."
         );
     }
 
@@ -432,9 +432,9 @@ pub fn main<T: Iterator<Item = String>>(mut args: T) -> Result<(), String> {
     for option_arg in option_args {
         match options.parse_argument(&option_arg) {
             Ok(true) => (),
-            Ok(false) => log!("Warning: ignoring unknown generated option {option_arg:?}"),
+            Ok(false) => log!("Warning: ignoring unknown option {option_arg:?}"),
             Err(error) => {
-                log!("Warning: ignoring invalid generated option {option_arg:?}: {error}")
+                log!("Warning: ignoring invalid option {option_arg:?}: {error}")
             }
         }
     }

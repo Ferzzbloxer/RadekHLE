@@ -66,7 +66,6 @@
 pub mod gles1_native;
 pub mod gles1_on_gl2;
 pub mod gles1_on_gles2;
-pub mod gles1_on_gles2_fixes;
 pub mod gles1_on_gles2_logging;
 pub mod gles1_on_gles3;
 pub mod gles2_glsl;
@@ -108,36 +107,26 @@ static TRANSLATOR_TRACING_ENABLED: AtomicBool = AtomicBool::new(false);
 static VERBOSE_LOGGING_ENABLED: AtomicBool = AtomicBool::new(false);
 static SHADER_COMPATIBILITY_FIXES: AtomicBool = AtomicBool::new(true);
 static GL_CALL_SEQUENCE: AtomicU64 = AtomicU64::new(0);
-static ANISOTROPIC_FILTERING: AtomicU8 = AtomicU8::new(1);
 static TEXTURE_UPSCALER: AtomicU8 = AtomicU8::new(1);
 static ANTI_ALIASING: AtomicU8 = AtomicU8::new(1);
-static TEXTURE_FILTERING: AtomicU8 = AtomicU8::new(0);
 static MEMORY_MANAGEMENT: AtomicU8 = AtomicU8::new(1);
 
 pub(crate) fn configure_quality_options(
-    anisotropic_filtering: u8,
     texture_upscaler: u8,
     anti_aliasing: u8,
-    texture_filtering: u8,
     memory_management: u8,
 ) {
-    ANISOTROPIC_FILTERING.store(anisotropic_filtering.clamp(1, 16), Ordering::Relaxed);
     TEXTURE_UPSCALER.store(texture_upscaler.clamp(1, 4), Ordering::Relaxed);
     ANTI_ALIASING.store(anti_aliasing.clamp(1, 8), Ordering::Relaxed);
-    TEXTURE_FILTERING.store(texture_filtering.min(3), Ordering::Relaxed);
     MEMORY_MANAGEMENT.store(memory_management.min(2), Ordering::Relaxed);
 }
 
-pub(crate) fn quality_options() -> (u8, u8, u8) {
-    (
-        ANISOTROPIC_FILTERING.load(Ordering::Relaxed),
-        TEXTURE_UPSCALER.load(Ordering::Relaxed),
-        ANTI_ALIASING.load(Ordering::Relaxed),
-    )
+pub(crate) fn texture_upscaler() -> u8 {
+    TEXTURE_UPSCALER.load(Ordering::Relaxed)
 }
 
-pub(crate) fn texture_filtering() -> u8 {
-    TEXTURE_FILTERING.load(Ordering::Relaxed)
+pub(crate) fn anti_aliasing_samples() -> u8 {
+    ANTI_ALIASING.load(Ordering::Relaxed)
 }
 
 pub(crate) fn memory_management() -> u8 {

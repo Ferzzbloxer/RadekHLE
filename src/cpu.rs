@@ -455,17 +455,6 @@ impl Drop for A64Cpu {
 }
 
 impl A64Cpu {
-    pub fn new() -> Self {
-        Self::with_backend_and_fallback(
-            crate::options::Arm64Backend::Interpreter,
-            crate::options::Arm64Fallback::Interpreter,
-        )
-    }
-
-    pub fn with_backend(backend: crate::options::Arm64Backend) -> Self {
-        Self::with_backend_and_fallback(backend, crate::options::Arm64Fallback::Interpreter)
-    }
-
     pub fn with_backend_and_fallback(
         backend: crate::options::Arm64Backend,
         fallback: crate::options::Arm64Fallback,
@@ -495,12 +484,6 @@ impl A64Cpu {
             }
         };
         Self { backend }
-    }
-
-    pub fn swap_context(&mut self, context: &mut touchHLE_DynarmicA64Context) {
-        if let A64Backend::Jit { wrapper, .. } = self.backend {
-            unsafe { touchHLE_DynarmicA64Wrapper_swap_context(wrapper, context) }
-        }
     }
 
     pub fn load_context(&mut self, context: &touchHLE_DynarmicA64Context) {
@@ -611,7 +594,10 @@ mod tests {
         context.sp = STACK + 0x800;
         context.regs[30] = CODE + 0x100;
         let original_sp = context.sp;
-        let mut cpu = A64Cpu::new();
+        let mut cpu = A64Cpu::with_backend_and_fallback(
+            crate::options::Arm64Backend::Interpreter,
+            crate::options::Arm64Fallback::Interpreter,
+        );
         cpu.load_context(&context);
 
         for (index, instruction) in instructions.iter().take(6).enumerate() {

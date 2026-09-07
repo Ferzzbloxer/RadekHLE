@@ -1,4 +1,4 @@
-use crate::a64_runtime::{
+use crate::arm64_runtime::{
     dispatch, materialize_import, schedule_display_link_callback, A64GraphicsBackend, LoadedImage,
     RuntimeState,
 };
@@ -23,7 +23,6 @@ const MAX_HOST_DISPATCHES_PER_CALLBACK: u64 = 100_000;
 const A64_HALT_USER_DEFINED1: u32 = 0x0100_0000;
 const A64_HALT_USER_DEFINED2: u32 = 0x0200_0000;
 const A64_HALT_USER_DEFINED3: u32 = 0x0400_0000;
-const STARTUP_TRACE_INSTRUCTIONS: u64 = 10_000;
 const STALL_THRESHOLD: u64 = 512;
 const EXECUTION_SLICE_TICKS: u64 = 1_000;
 const ARM64_BOOTSTRAP_GRACE_SLICES: u32 = 8;
@@ -607,9 +606,6 @@ fn load_embedded_unity_framework(
     memory.merge_mappings(framework.memory)?;
     state.loaded_images.push(LoadedImage {
         name: "UnityFramework".to_owned(),
-        base,
-        end,
-        entry: framework.entry_point_pc,
         exports: framework.exported_symbols,
     });
     echo!(
@@ -824,9 +820,6 @@ pub fn run(bundle: Bundle, fs: Fs, options: Options, app_args: Vec<String>) -> R
                     if options.metal_translator { "the GLES1→GLES3 translator is enabled" } else { "the translator is disabled" },
                 );
             }
-            A64GraphicsBackend::SoftwareCompatibility => {
-                log!("ARM64 software compatibility backend selected; reason={graphics_reason}");
-            }
         }
         Some(Box::new(crate::window::Window::new(
             "RadekHLE ARM64",
@@ -931,7 +924,7 @@ pub fn run(bundle: Bundle, fs: Fs, options: Options, app_args: Vec<String>) -> R
                 lookup_host_symbol(binding.symbol.strip_prefix('_').unwrap_or(&binding.symbol))
             })
             .unwrap_or("<unimplemented>");
-        if symbol == "<unimplemented>" && !crate::a64_runtime::can_dispatch(&binding.symbol) {
+        if symbol == "<unimplemented>" && !crate::arm64_runtime::can_dispatch(&binding.symbol) {
             unresolved.push(binding.symbol.clone());
         }
         let binding_key = binding.symbol.clone();
@@ -1230,7 +1223,7 @@ pub fn run(bundle: Bundle, fs: Fs, options: Options, app_args: Vec<String>) -> R
                     .get(&value)
                     .map(|(name, _)| name.as_str())
                     .unwrap_or("<unknown>");
-                if !crate::a64_runtime::is_light_host_call(symbol) {
+                if !crate::arm64_runtime::is_light_host_call(symbol) {
                     host_dispatches_since_callback += 1;
                 }
                 let continuation_pc = host_call_continuation(&context);
