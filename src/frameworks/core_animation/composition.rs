@@ -108,7 +108,7 @@ pub fn recomposite_if_necessary(env: &mut Environment, force: bool) -> Option<In
         configured_rate
     };
     let capped_rate = if env.options.battery_saver {
-        capped_rate.min(30.0)
+        capped_rate.min(24.0)
     } else {
         capped_rate
     };

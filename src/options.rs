@@ -259,6 +259,7 @@ impl GlesOverrideVersion {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum AudioBackend {
     Default,
+    CoreAudio,
     OpenSlEs,
     AAudio,
 }
@@ -273,6 +274,7 @@ impl AudioBackend {
     pub fn parse(value: &str) -> Result<Self, String> {
         match value.trim().to_ascii_lowercase().as_str() {
             "default" => Ok(Self::Default),
+            "core" | "coreaudio" | "core-audio" => Ok(Self::CoreAudio),
             "opensl-es" | "opensles" | "open-sl-es" => Ok(Self::OpenSlEs),
             "aaudio" => Ok(Self::AAudio),
             _ => Err(format!("Invalid audio backend {value:?}")),
@@ -282,6 +284,7 @@ impl AudioBackend {
     pub fn label(self) -> &'static str {
         match self {
             Self::Default => "default",
+            Self::CoreAudio => "Core audio",
             Self::OpenSlEs => "OpenSL ES",
             Self::AAudio => "AAudio",
         }
@@ -290,6 +293,7 @@ impl AudioBackend {
     pub fn driver_name(self) -> &'static str {
         match self {
             Self::Default => "default",
+            Self::CoreAudio => "core",
             Self::OpenSlEs => "opensl",
             Self::AAudio => "aaudio",
         }
@@ -356,8 +360,8 @@ pub struct Options {
     pub revert_y_axis: bool,
     /// iOS version reported to guest applications. `None` uses the latest compatibility version.
     pub ios_version: Option<(i32, i32, i32)>,
-    /// Prefer OpenAL Soft's PulseAudio backend on Linux when enabled.
-    pub pulse_audio: bool,
+    /// Request the native Core Audio host path where it is available.
+    pub core_audio: bool,
     pub audio_backend: AudioBackend,
     pub scale_hack: f32,
     pub deadzone: f32,
@@ -471,7 +475,7 @@ impl Default for Options {
             revert_x_axis: false,
             revert_y_axis: false,
             ios_version: None,
-            pulse_audio: false,
+            core_audio: false,
             audio_backend: AudioBackend::Default,
             scale_hack: 1.0,
             analog_stick_tilt_controls: true,
@@ -597,12 +601,18 @@ impl Options {
                 return Err("Invalid value for --ios-version=".to_string());
             }
             self.ios_version = Some((major, minor, patch));
-        } else if arg == "--pulse-audio" {
-            self.pulse_audio = true;
-        } else if arg == "--disable-pulse-audio" {
-            self.pulse_audio = false;
+        } else if arg == "--core-audio" {
+            self.core_audio = true;
+            self.audio_backend = AudioBackend::CoreAudio;
+        } else if arg == "--disable-core-audio" {
+            self.core_audio = false;
+            if self.audio_backend == AudioBackend::CoreAudio {
+                self.audio_backend = AudioBackend::Default;
+            }
         } else if let Some(value) = arg.strip_prefix("--audio-backend=") {
-            self.audio_backend = AudioBackend::parse(value)?;
+            let backend = AudioBackend::parse(value)?;
+            self.core_audio = backend == AudioBackend::CoreAudio;
+            self.audio_backend = backend;
         } else if let Some(value) = arg.strip_prefix("--screen-size=") {
             let (w, h) = value
                 .split_once(|c| c == 'x' || c == 'X' || c == ',')
@@ -837,6 +847,8 @@ impl Options {
             }
         } else if arg == "--force-composition" {
             self.force_composition = true;
+        } else if arg == "--disable-force-composition" {
+            self.force_composition = false;
         } else if arg == "--force-32-bit" {
             self.force_32_bit = true;
             self.force_64_bit = false;

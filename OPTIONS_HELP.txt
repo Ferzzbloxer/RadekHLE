@@ -472,6 +472,7 @@ Other options:
         no reason to enable this option. The number of bytes must be
         chosen carefully on a per-app basis.
 
-    --pulse-audio / --disable-pulse-audio
-        Prefer OpenAL Soft's PulseAudio backend on Linux. Off by default; if
-        PulseAudio is unavailable, the normal OpenAL fallback remains active.
+    --core-audio / --disable-core-audio
+        Prefer the native Core Audio host backend where it is available
+        (currently macOS). On other platforms the normal OpenAL fallback
+        remains active.

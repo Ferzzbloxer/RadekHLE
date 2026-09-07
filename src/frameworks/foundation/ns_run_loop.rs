@@ -459,7 +459,7 @@ pub fn run_run_loop(
             configured_rate
         };
         let capped_rate = if env.options.battery_saver {
-            capped_rate.min(30.0)
+            capped_rate.min(24.0)
         } else {
             capped_rate
         };

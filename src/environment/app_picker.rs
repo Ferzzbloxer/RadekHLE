@@ -186,6 +186,7 @@ const GLES_OVERRIDE_ENTRIES: &[(&str, crate::options::GlesOverrideVersion)] = &[
 ];
 const AUDIO_BACKEND_ENTRIES: &[(&str, crate::options::AudioBackend)] = &[
     ("default", crate::options::AudioBackend::Default),
+    ("Core audio", crate::options::AudioBackend::CoreAudio),
     ("OpenSL ES", crate::options::AudioBackend::OpenSlEs),
     ("AAudio", crate::options::AudioBackend::AAudio),
 ];
@@ -295,6 +296,8 @@ struct AppPickerDelegateHostObject {
     trace_gl_errors: Option<bool>,
     verbose_logging: Option<bool>,
     shader_compatibility_fixes: Option<bool>,
+    fix_texture_min_filter: Option<bool>,
+    force_composition: Option<bool>,
     fast_memory: Option<bool>,
     force_32_bit: Option<bool>,
     force_64_bit: Option<bool>,
@@ -305,7 +308,7 @@ struct AppPickerDelegateHostObject {
     apps_refresh_requested: bool,
     ios_version_toggle: bool,
     ios_version: Option<Option<(i32, i32, i32)>>,
-    pulse_audio: Option<bool>,
+    core_audio: Option<bool>,
     audio_backend_toggle: bool,
     audio_backend: Option<crate::options::AudioBackend>,
     graphics_api_toggle: bool,
@@ -528,6 +531,14 @@ const CLASSES: ClassExports = objc_classes! {
     let switch_state: bool = msg![env; switch isOn];
     env.objc.borrow_mut::<AppPickerDelegateHostObject>(this).shader_compatibility_fixes = Some(switch_state);
 }
+- (())fixTextureMinFilter:(id)switch {
+    let switch_state: bool = msg![env; switch isOn];
+    env.objc.borrow_mut::<AppPickerDelegateHostObject>(this).fix_texture_min_filter = Some(switch_state);
+}
+- (())forceComposition:(id)switch {
+    let switch_state: bool = msg![env; switch isOn];
+    env.objc.borrow_mut::<AppPickerDelegateHostObject>(this).force_composition = Some(switch_state);
+}
 - (())fastMemory:(id)switch { // UISwitch*
     let switch_state: bool = msg![env; switch isOn];
     env.objc.borrow_mut::<AppPickerDelegateHostObject>(this).fast_memory = Some(switch_state);
@@ -563,9 +574,9 @@ const CLASSES: ClassExports = objc_classes! {
     let tag: NSInteger = msg![env; sender tag];
     env.objc.borrow_mut::<AppPickerDelegateHostObject>(this).ios_version = Some(ios_version_for_tag(tag as i32));
 }
-- (())pulseAudio:(id)switch {
+- (())coreAudio:(id)switch {
     let switch_state: bool = msg![env; switch isOn];
-    env.objc.borrow_mut::<AppPickerDelegateHostObject>(this).pulse_audio = Some(switch_state);
+    env.objc.borrow_mut::<AppPickerDelegateHostObject>(this).core_audio = Some(switch_state);
 }
 
 - (())arm64Backend:(id)switch {
@@ -1009,6 +1020,8 @@ fn app_picker_inner(
     let mut quick_options_battery_saver = false;
     let mut quick_options_verbose_logging = false;
     let mut quick_options_shader_compatibility_fixes = true;
+    let mut quick_options_fix_texture_min_filter = cfg!(target_os = "android");
+    let mut quick_options_force_composition = false;
     let mut quick_options_angle_driver = false;
     let mut quick_options_log_file = true;
     let mut quick_options_trace_gl_errors = false;
@@ -1019,7 +1032,7 @@ fn app_picker_inner(
     let mut quick_options_device_model_open = false;
     let mut quick_options_device_model_scroll: isize = 0;
     let mut quick_options_ios_version: Option<(i32, i32, i32)> = None;
-    let mut quick_options_pulse_audio = false;
+    let mut quick_options_core_audio = false;
     let mut quick_options_graphics_api = crate::options::GraphicsApi::Default;
     let mut quick_options_audio_backend = crate::options::AudioBackend::Default;
     let mut quick_options_texture_filtering = crate::options::TextureFiltering::Default;
@@ -1223,6 +1236,10 @@ fn app_picker_inner(
     () = msg![env; (quick_options_stuff.battery_saver_switch) setOn:quick_options_battery_saver];
     () =
         msg![env; (quick_options_stuff.verbose_logging_switch) setOn:quick_options_verbose_logging];
+    () = msg![env; (quick_options_stuff.fix_texture_min_filter_switch)
+        setOn:quick_options_fix_texture_min_filter];
+    () = msg![env; (quick_options_stuff.force_composition_switch)
+        setOn:quick_options_force_composition];
     update_orientation_buttons(
         env,
         &quick_options_stuff.orientation_buttons,
@@ -1345,6 +1362,7 @@ fn app_picker_inner(
                 Err(e) => echo!("Couldn't refresh the game list: {}", e),
             }
         } else if std::mem::take(&mut host_obj.ios_version_toggle) {
+            set_settings_menu_background(env, quick_options_stuff.ios_version_menu);
             let hidden: bool = msg![env; (quick_options_stuff.ios_version_menu) isHidden];
             () = msg![env; (quick_options_stuff.ios_version_menu) setHidden:(!hidden)];
             if hidden {
@@ -1361,6 +1379,7 @@ fn app_picker_inner(
                 quick_options_ios_version,
             );
         } else if std::mem::take(&mut host_obj.graphics_api_toggle) {
+            set_settings_menu_background(env, quick_options_stuff.graphics_api_menu);
             let hidden: bool = msg![env; (quick_options_stuff.graphics_api_menu) isHidden];
             () = msg![env; (quick_options_stuff.graphics_api_menu) setHidden:(!hidden)];
             if hidden {
@@ -1721,6 +1740,10 @@ fn app_picker_inner(
             quick_options_verbose_logging = enabled;
         } else if let Some(enabled) = std::mem::take(&mut host_obj.shader_compatibility_fixes) {
             quick_options_shader_compatibility_fixes = enabled;
+        } else if let Some(enabled) = std::mem::take(&mut host_obj.fix_texture_min_filter) {
+            quick_options_fix_texture_min_filter = enabled;
+        } else if let Some(enabled) = std::mem::take(&mut host_obj.force_composition) {
+            quick_options_force_composition = enabled;
         } else if let Some(enabled) = std::mem::take(&mut host_obj.frame_generation) {
             quick_options_frame_generation = enabled;
             () = msg![env; (quick_options_stuff.frame_generation_switch) setOn:enabled];
@@ -1733,8 +1756,8 @@ fn app_picker_inner(
             quick_options_llvmpipe_fallback = enabled;
         } else if let Some(enabled) = std::mem::take(&mut host_obj.metal_translator) {
             quick_options_metal_translator = enabled;
-        } else if let Some(enabled) = std::mem::take(&mut host_obj.pulse_audio) {
-            quick_options_pulse_audio = enabled;
+        } else if let Some(enabled) = std::mem::take(&mut host_obj.core_audio) {
+            quick_options_core_audio = enabled;
         } else if let Some(enabled) = std::mem::take(&mut host_obj.software_rendering) {
             quick_options_software_rendering = enabled;
         } else if let Some(enabled) = std::mem::take(&mut host_obj.custom_driver) {
@@ -1792,10 +1815,10 @@ fn app_picker_inner(
         option_args.push(format!("--ios-version={major}.{minor}.{patch}"));
     }
     option_args.push(
-        if quick_options_pulse_audio {
-            "--pulse-audio"
+        if quick_options_core_audio {
+            "--core-audio"
         } else {
-            "--disable-pulse-audio"
+            "--disable-core-audio"
         }
         .to_string(),
     );
@@ -1914,10 +1937,12 @@ fn app_picker_inner(
             quick_options_gles_override.label()
         ));
     }
-    option_args.push(format!(
-        "--audio-backend={}",
-        quick_options_audio_backend.label()
-    ));
+    let audio_backend = if quick_options_core_audio {
+        crate::options::AudioBackend::CoreAudio
+    } else {
+        quick_options_audio_backend
+    };
+    option_args.push(format!("--audio-backend={}", audio_backend.driver_name()));
     option_args.push(
         if quick_options_no_texture_compression {
             "--no-texture-compression"
@@ -2008,6 +2033,22 @@ fn app_picker_inner(
             "--shader-compatibility-fixes"
         } else {
             "--disable-shader-compatibility-fixes"
+        }
+        .to_string(),
+    );
+    option_args.push(
+        if quick_options_fix_texture_min_filter {
+            "--fix-texture-min-filter"
+        } else {
+            "--no-fix-texture-min-filter"
+        }
+        .to_string(),
+    );
+    option_args.push(
+        if quick_options_force_composition {
+            "--force-composition"
+        } else {
+            "--disable-force-composition"
         }
         .to_string(),
     );
@@ -2748,6 +2789,8 @@ struct QuickOptionsStuff {
     vsync_switch: id,
     battery_saver_switch: id,
     verbose_logging_switch: id,
+    fix_texture_min_filter_switch: id,
+    force_composition_switch: id,
     revert_x_axis_switch: id,
     revert_y_axis_switch: id,
     /// The button that toggles the "Device model" dropdown open/closed. Its
@@ -2968,12 +3011,16 @@ fn setup_quick_options(
         RowKind::IosVersionDropdown,
         RowKind::Label("Audio backend"),
         RowKind::AudioBackendDropdown,
-        RowKind::Label("Pulse audio"),
-        RowKind::Switch("pulseAudio:", false),
+        RowKind::Label("Core audio"),
+        RowKind::Switch("coreAudio:", false),
         RowKind::Label("Graphics API"),
         RowKind::GraphicsApiDropdown,
         RowKind::Label("Shader compatibility fixes"),
         RowKind::Switch("shaderCompatibilityFixes:", true),
+        RowKind::Label("Fix incomplete textures"),
+        RowKind::Switch("fixTextureMinFilter:", cfg!(target_os = "android")),
+        RowKind::Label("Force Core Animation composition"),
+        RowKind::Switch("forceComposition:", false),
         RowKind::Label("GLES override version"),
         RowKind::GlesOverrideDropdown,
         RowKind::Label("Custom driver"),
@@ -3120,6 +3167,8 @@ fn setup_quick_options(
     let mut vsync_switch: id = nil;
     let mut battery_saver_switch: id = nil;
     let mut verbose_logging_switch: id = nil;
+    let mut fix_texture_min_filter_switch: id = nil;
+    let mut force_composition_switch: id = nil;
     let mut revert_x_axis_switch: id = nil;
     let mut revert_y_axis_switch: id = nil;
     let mut ios_version_btn: id = nil;
@@ -3363,6 +3412,12 @@ fn setup_quick_options(
                 }
                 if selector_name == "verboseLogging:" {
                     verbose_logging_switch = switch;
+                }
+                if selector_name == "fixTextureMinFilter:" {
+                    fix_texture_min_filter_switch = switch;
+                }
+                if selector_name == "forceComposition:" {
+                    force_composition_switch = switch;
                 }
                 if selector_name == "noTextureCompression:" {
                     no_texture_compression_switch = switch;
@@ -3617,6 +3672,8 @@ fn setup_quick_options(
         vsync_switch,
         battery_saver_switch,
         verbose_logging_switch,
+        fix_texture_min_filter_switch,
+        force_composition_switch,
         revert_x_axis_switch,
         revert_y_axis_switch,
         device_model_btn,
@@ -3732,7 +3789,13 @@ fn update_graphics_api_dropdown(
     () = msg![env; button layoutSubviews];
 }
 
+fn set_settings_menu_background(env: &mut Environment, menu: id) {
+    let gray: id = msg_class![env; UIColor colorWithRed:0.62 green:0.63 blue:0.65 alpha:1.0];
+    () = msg![env; menu setBackgroundColor:gray];
+}
+
 fn toggle_settings_dropdown(env: &mut Environment, main_view: id, menu: id, button: id) {
+    set_settings_menu_background(env, menu);
     let hidden: bool = msg![env; menu isHidden];
     () = msg![env; menu setHidden:(!hidden)];
     if hidden {
@@ -4108,6 +4171,7 @@ fn make_device_model_dropdown(
         () = msg![env; item_label setAdjustsFontSizeToFitWidth:true];
         () = msg![env; item_label setMinimumFontSize:8.0];
         () = msg![env; item_btn setTitleColor:white forState:UIControlStateNormal];
+        () = msg![env; item_btn setBackgroundColor:dark_gray];
         () = msg![env; item_btn setFrame:item_frame];
         () = msg![env; item_btn layoutSubviews];
         let tag: NSInteger = tag as NSInteger;

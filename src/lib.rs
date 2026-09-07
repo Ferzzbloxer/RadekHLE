@@ -451,14 +451,14 @@ pub fn main<T: Iterator<Item = String>>(mut args: T) -> Result<(), String> {
         }
     }
     crate::log::set_file_logging(options.log_file);
-    if options.pulse_audio {
+    if options.core_audio {
         unsafe {
-            std::env::set_var("TOUCHHLE_PULSE_AUDIO", "1");
+            std::env::set_var("TOUCHHLE_CORE_AUDIO", "1");
         }
-        log!("Pulse audio option enabled for this launch");
+        log!("Core audio option enabled for this launch");
     } else {
         unsafe {
-            std::env::remove_var("TOUCHHLE_PULSE_AUDIO");
+            std::env::remove_var("TOUCHHLE_CORE_AUDIO");
         }
     }
     crate::gles::configure_translator_tracing(options.trace_gl_errors, options.verbose_logging);

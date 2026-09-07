@@ -63,7 +63,7 @@ fn display_link_refresh_rate(env: &Environment) -> f64 {
         configured_rate
     };
     if env.options.battery_saver {
-        capped_rate.min(30.0).max(1.0)
+        capped_rate.min(24.0).max(1.0)
     } else {
         capped_rate.max(1.0)
     }

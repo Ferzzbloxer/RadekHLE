@@ -77,7 +77,18 @@ fn ensure_openal_backend_available() {
     }
 
     let requested_backend = std::env::var("TOUCHHLE_AUDIO_BACKEND").unwrap_or_default();
-    if requested_backend == "opensl" {
+    if requested_backend == "core" || std::env::var_os("TOUCHHLE_CORE_AUDIO").is_some() {
+        if cfg!(target_os = "macos") {
+            unsafe {
+                std::env::set_var("ALSOFT_DRIVERS", "core");
+            }
+            log!("Core audio selected: OpenAL Soft is using its native CoreAudio driver");
+            return;
+        }
+        log!(
+            "Core audio was selected, but this platform has no native CoreAudio driver; using the host default"
+        );
+    } else if requested_backend == "opensl" {
         if cfg!(target_os = "android") {
             unsafe {
                 std::env::set_var("ALSOFT_DRIVERS", "opensl");
@@ -88,9 +99,6 @@ fn ensure_openal_backend_available() {
         log!("OpenSL ES was selected, but this platform has no OpenSL ES backend; using the host default");
     } else if requested_backend == "aaudio" {
         if cfg!(target_os = "android") {
-            // The bundled OpenAL Soft build does not expose an AAudio backend.
-            // Prefer its native OpenSL ES path instead of silently selecting a
-            // desktop backend or failing the whole emulator at audio startup.
             unsafe {
                 std::env::set_var("ALSOFT_DRIVERS", "opensl");
             }
@@ -100,20 +108,6 @@ fn ensure_openal_backend_available() {
         log!(
             "AAudio was selected, but this platform has no AAudio backend; using the host default"
         );
-    }
-
-    if cfg!(target_os = "linux") && std::env::var_os("TOUCHHLE_PULSE_AUDIO").is_some() {
-        if std::env::var_os("ALSOFT_DRIVERS").is_none() {
-            unsafe {
-                std::env::set_var("ALSOFT_DRIVERS", "pulse,alsa");
-                std::env::set_var("ALSOFT_MIXER_THREADS", "1");
-                std::env::set_var("ALSOFT_PERIODS", "4");
-                std::env::set_var("ALSOFT_PERIOD_SIZE", "1024");
-                std::env::set_var("ALSOFT_BUFFER_SIZE", "4096");
-                std::env::set_var("ALSOFT_HRTF", "off");
-            }
-            log!("Pulse audio mode enabled: OpenAL Soft configured for pulse,alsa with a 4-period 4096-frame playback buffer");
-        }
     }
 
     if host_audio_backend_available() {
@@ -269,10 +263,10 @@ impl OpenALContext {
             return Err("Could not open OpenAL context".to_string());
         }
         log!(
-            "OpenAL context created: device={:?}, context={:?}, pulse_mode={}, mixer_threads={:?}, buffer_size={:?}",
+            "OpenAL context created: device={:?}, context={:?}, core_audio_mode={}, mixer_threads={:?}, buffer_size={:?}",
             device,
             context,
-            std::env::var_os("TOUCHHLE_PULSE_AUDIO").is_some(),
+            std::env::var_os("TOUCHHLE_CORE_AUDIO").is_some(),
             std::env::var("ALSOFT_MIXER_THREADS").ok(),
             std::env::var("ALSOFT_BUFFER_SIZE").ok(),
         );
