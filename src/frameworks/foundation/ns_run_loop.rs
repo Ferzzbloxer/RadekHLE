@@ -451,14 +451,24 @@ pub fn run_run_loop(
         //
         // Poll frequently enough for the configured host refresh rate while
         // still waking early for audio and scheduled timers.
-        let refresh_interval = if env.options.frame_pacing {
-            env.options
-                .fps_limit
-                .map(|fps| Duration::from_secs_f64(1.0 / fps))
-                .unwrap_or(Duration::from_millis(1000 / 60))
+        let display_rate = env.window().display_refresh_rate().max(1.0);
+        let configured_rate = env.options.fps_limit.unwrap_or(display_rate);
+        let capped_rate = if env.options.vsync {
+            configured_rate.min(display_rate)
         } else {
-            Duration::ZERO
+            configured_rate
         };
+        let capped_rate = if env.options.battery_saver {
+            capped_rate.min(30.0)
+        } else {
+            capped_rate
+        };
+        let refresh_interval =
+            if env.options.frame_pacing || env.options.vsync || env.options.battery_saver {
+                Duration::from_secs_f64(1.0 / capped_rate.max(1.0))
+            } else {
+                Duration::ZERO
+            };
         let limit = if has_audio_sources {
             refresh_interval.min(Duration::from_millis(8))
         } else {

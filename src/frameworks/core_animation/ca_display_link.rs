@@ -33,6 +33,7 @@ use crate::objc::{
     autorelease, id, msg, msg_class, msg_send, nil, objc_classes, release, retain, ClassExports,
     HostObject, NSZonePtr, SEL,
 };
+use crate::Environment;
 
 #[derive(Default)]
 struct CADisplayLinkHostObject {
@@ -53,6 +54,25 @@ struct CADisplayLinkHostObject {
 }
 impl HostObject for CADisplayLinkHostObject {}
 
+fn display_link_refresh_rate(env: &Environment) -> f64 {
+    let display_rate = env.window().display_refresh_rate().max(1.0);
+    let configured_rate = env.options.fps_limit.unwrap_or(display_rate);
+    let capped_rate = if env.options.vsync {
+        configured_rate.min(display_rate)
+    } else {
+        configured_rate
+    };
+    if env.options.battery_saver {
+        capped_rate.min(30.0).max(1.0)
+    } else {
+        capped_rate.max(1.0)
+    }
+}
+
+fn display_link_pacing_enabled(env: &Environment) -> bool {
+    env.options.frame_pacing || env.options.vsync || env.options.battery_saver
+}
+
 pub const CLASSES: ClassExports = objc_classes! {
 
 (env, this, _cmd);
@@ -72,8 +92,8 @@ pub const CLASSES: ClassExports = objc_classes! {
     // we need a re-direction: the timer fires on the display link, which then
     // calls the original selector, passing the link as a second argument.
     let redirect_sel: SEL = env.objc.lookup_selector("_touchHLE_displayLinkTimerDidFire:").unwrap();
-    let refresh_rate = env.options.fps_limit.unwrap_or(60.0);
-    let timer_interval = if env.options.frame_pacing { 1.0 / refresh_rate } else { 0.0001 };
+    let refresh_rate = display_link_refresh_rate(env);
+    let timer_interval = if display_link_pacing_enabled(env) { 1.0 / refresh_rate } else { 0.0001 };
     let ns_timer = msg_class![env; NSTimer timerWithTimeInterval:timer_interval
                      target:display_link
                    selector:redirect_sel
@@ -117,8 +137,8 @@ pub const CLASSES: ClassExports = objc_classes! {
 - (f64)duration {
     let ns_timer = env.objc.borrow::<CADisplayLinkHostObject>(this).ns_timer;
     if ns_timer == nil {
-        return if env.options.frame_pacing {
-            1.0 / env.options.fps_limit.unwrap_or(60.0)
+        return if display_link_pacing_enabled(env) {
+            1.0 / display_link_refresh_rate(env)
         } else {
             0.0
         };
@@ -140,8 +160,8 @@ pub const CLASSES: ClassExports = objc_classes! {
     // rather than raising NSInvalidArgumentException.
     let safe_interval = frameInterval.max(1);
     env.objc.borrow_mut::<CADisplayLinkHostObject>(this).frame_interval = safe_interval;
-    let refresh_rate = env.options.fps_limit.unwrap_or(60.0);
-    let interval = if env.options.frame_pacing {
+    let refresh_rate = display_link_refresh_rate(env);
+    let interval = if display_link_pacing_enabled(env) {
         safe_interval as f64 / refresh_rate
     } else {
         0.0001
@@ -155,16 +175,16 @@ pub const CLASSES: ClassExports = objc_classes! {
 
 - (NSInteger)preferredFramesPerSecond {
     let interval = env.objc.borrow::<CADisplayLinkHostObject>(this).frame_interval;
-    if env.options.frame_pacing {
-        (env.options.fps_limit.unwrap_or(60.0) as NSInteger / interval.max(1)).max(1)
+    if display_link_pacing_enabled(env) {
+        (display_link_refresh_rate(env) as NSInteger / interval.max(1)).max(1)
     } else {
         0
     }
 }
 
 - (())setPreferredFramesPerSecond:(NSInteger)fps {
-    let max_fps = env.options.fps_limit.unwrap_or(60.0) as NSInteger;
-    if !env.options.frame_pacing {
+    let max_fps = display_link_refresh_rate(env) as NSInteger;
+    if !display_link_pacing_enabled(env) {
         return;
     }
     let safe_fps = if fps <= 0 { max_fps } else { fps.min(max_fps) };

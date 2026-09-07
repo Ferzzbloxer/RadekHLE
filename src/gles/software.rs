@@ -1160,7 +1160,12 @@ impl GLES for SoftwareGLES<'_> {
         }
     }
     unsafe fn ClearColor(&mut self, r: GLclampf, g: GLclampf, b: GLclampf, a: GLclampf) {
-        self.state.clear_color = [r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), b.clamp(0.0, 1.0), a.clamp(0.0, 1.0)];
+        self.state.clear_color = [
+            r.clamp(0.0, 1.0),
+            g.clamp(0.0, 1.0),
+            b.clamp(0.0, 1.0),
+            a.clamp(0.0, 1.0),
+        ];
     }
     unsafe fn ClearColorx(&mut self, r: GLclampx, g: GLclampx, b: GLclampx, a: GLclampx) {
         self.ClearColor(
@@ -1198,7 +1203,13 @@ impl GLES for SoftwareGLES<'_> {
         image_size: GLsizei,
         data: *const GLvoid,
     ) {
-        if target != gl::TEXTURE_2D || level < 0 || width <= 0 || height <= 0 || border != 0 || image_size < 0 {
+        if target != gl::TEXTURE_2D
+            || level < 0
+            || width <= 0
+            || height <= 0
+            || border != 0
+            || image_size < 0
+        {
             self.state.error(gl::INVALID_VALUE);
             return;
         }
@@ -1254,7 +1265,9 @@ impl GLES for SoftwareGLES<'_> {
             self.state.error(gl::INVALID_OPERATION);
             return;
         }
-        if !crate::gles::util::try_decode_pvrtc(self, target, level, format, width, height, 0, bytes) {
+        if !crate::gles::util::try_decode_pvrtc(
+            self, target, level, format, width, height, 0, bytes,
+        ) {
             self.state.error(gl::INVALID_ENUM);
         }
     }
@@ -1406,13 +1419,49 @@ impl GLES for SoftwareGLES<'_> {
         let crop_x = crop[0].max(0).min(texture.width as GLint) as usize;
         let crop_y = crop[1].max(0).min(texture.height as GLint) as usize;
         let vertices = [
-            Vertex { position: [x, y, z, 1.0], color: self.state.current_color, texcoord: [crop_x as f32 / texture.width as f32, crop_y as f32 / texture.height as f32] },
-            Vertex { position: [x + width, y, z, 1.0], color: self.state.current_color, texcoord: [(crop_x + crop_width) as f32 / texture.width as f32, crop_y as f32 / texture.height as f32] },
-            Vertex { position: [x, y + height, z, 1.0], color: self.state.current_color, texcoord: [crop_x as f32 / texture.width as f32, (crop_y + crop_height) as f32 / texture.height as f32] },
-            Vertex { position: [x + width, y + height, z, 1.0], color: self.state.current_color, texcoord: [(crop_x + crop_width) as f32 / texture.width as f32, (crop_y + crop_height) as f32 / texture.height as f32] },
+            Vertex {
+                position: [x, y, z, 1.0],
+                color: self.state.current_color,
+                texcoord: [
+                    crop_x as f32 / texture.width as f32,
+                    crop_y as f32 / texture.height as f32,
+                ],
+            },
+            Vertex {
+                position: [x + width, y, z, 1.0],
+                color: self.state.current_color,
+                texcoord: [
+                    (crop_x + crop_width) as f32 / texture.width as f32,
+                    crop_y as f32 / texture.height as f32,
+                ],
+            },
+            Vertex {
+                position: [x, y + height, z, 1.0],
+                color: self.state.current_color,
+                texcoord: [
+                    crop_x as f32 / texture.width as f32,
+                    (crop_y + crop_height) as f32 / texture.height as f32,
+                ],
+            },
+            Vertex {
+                position: [x + width, y + height, z, 1.0],
+                color: self.state.current_color,
+                texcoord: [
+                    (crop_x + crop_width) as f32 / texture.width as f32,
+                    (crop_y + crop_height) as f32 / texture.height as f32,
+                ],
+            },
         ];
-        self.draw_triangle(vertices[0].clone(), vertices[1].clone(), vertices[2].clone());
-        self.draw_triangle(vertices[2].clone(), vertices[1].clone(), vertices[3].clone());
+        self.draw_triangle(
+            vertices[0].clone(),
+            vertices[1].clone(),
+            vertices[2].clone(),
+        );
+        self.draw_triangle(
+            vertices[2].clone(),
+            vertices[1].clone(),
+            vertices[3].clone(),
+        );
     }
     unsafe fn GenTextures(&mut self, n: GLsizei, textures: *mut GLuint) {
         if textures.is_null() {
@@ -1523,13 +1572,17 @@ impl GLES for SoftwareGLES<'_> {
             self.state.error(gl::INVALID_VALUE);
             return;
         }
-        *params = self.state.texture().map(|texture| match pname {
-            gl::TEXTURE_MIN_FILTER => texture.min_filter as GLint,
-            gl::TEXTURE_MAG_FILTER => texture.mag_filter as GLint,
-            gl::TEXTURE_WRAP_S => texture.wrap_s as GLint,
-            gl::TEXTURE_WRAP_T => texture.wrap_t as GLint,
-            _ => 0,
-        }).unwrap_or(0);
+        *params = self
+            .state
+            .texture()
+            .map(|texture| match pname {
+                gl::TEXTURE_MIN_FILTER => texture.min_filter as GLint,
+                gl::TEXTURE_MAG_FILTER => texture.mag_filter as GLint,
+                gl::TEXTURE_WRAP_S => texture.wrap_s as GLint,
+                gl::TEXTURE_WRAP_T => texture.wrap_t as GLint,
+                _ => 0,
+            })
+            .unwrap_or(0);
     }
     unsafe fn GetTexParameterfv(&mut self, target: GLenum, pname: GLenum, params: *mut GLfloat) {
         if params.is_null() {
@@ -1555,7 +1608,10 @@ impl GLES for SoftwareGLES<'_> {
             return;
         }
         *params = if pname == gl::TEXTURE_ENV_MODE {
-            self.state.texture().map(|texture| texture.env_mode as GLint).unwrap_or(gl::MODULATE as GLint)
+            self.state
+                .texture()
+                .map(|texture| texture.env_mode as GLint)
+                .unwrap_or(gl::MODULATE as GLint)
         } else {
             0
         };
@@ -1634,11 +1690,19 @@ impl GLES for SoftwareGLES<'_> {
                     let dst = (y * width + x) * 4;
                     match type_ {
                         gl::UNSIGNED_BYTE if format == gl::BGRA_EXT => {
-                            output[dst..dst + 4].copy_from_slice(&[*src.add(2), *src.add(1), *src, *src.add(3)]);
+                            output[dst..dst + 4].copy_from_slice(&[
+                                *src.add(2),
+                                *src.add(1),
+                                *src,
+                                *src.add(3),
+                            ]);
                         }
                         gl::UNSIGNED_BYTE => {
-                            output[dst..dst + channels].copy_from_slice(std::slice::from_raw_parts(src, channels));
-                            if channels == 3 { output[dst + 3] = 255; }
+                            output[dst..dst + channels]
+                                .copy_from_slice(std::slice::from_raw_parts(src, channels));
+                            if channels == 3 {
+                                output[dst + 3] = 255;
+                            }
                         }
                         gl::UNSIGNED_SHORT_5_6_5 => {
                             let value = u16::from_ne_bytes([*src, *src.add(1)]);
@@ -1677,7 +1741,14 @@ impl GLES for SoftwareGLES<'_> {
         type_: GLenum,
         pixels: *const GLvoid,
     ) {
-        if target != gl::TEXTURE_2D || level < 0 || xoffset < 0 || yoffset < 0 || width < 0 || height < 0 || (pixels.is_null() && (width > 0 && height > 0)) {
+        if target != gl::TEXTURE_2D
+            || level < 0
+            || xoffset < 0
+            || yoffset < 0
+            || width < 0
+            || height < 0
+            || (pixels.is_null() && (width > 0 && height > 0))
+        {
             self.state.error(gl::INVALID_VALUE);
             return;
         }
@@ -1694,22 +1765,32 @@ impl GLES for SoftwareGLES<'_> {
         let row_bytes = width * channels;
         let alignment = self.state.unpack_alignment.max(1) as usize;
         let row_stride = (row_bytes + alignment - 1) / alignment * alignment;
-        let Some(texture) = self.state.texture_mut() else { return; };
+        let Some(texture) = self.state.texture_mut() else {
+            return;
+        };
         let source = pixels.cast::<u8>();
         for y in 0..height {
             for x in 0..width {
                 let dx = xoffset as usize + x;
                 let dy = yoffset as usize + y;
-                if dx >= texture.width || dy >= texture.height { continue; }
+                if dx >= texture.width || dy >= texture.height {
+                    continue;
+                }
                 let src = source.add(y * row_stride + x * channels);
                 let d = (dy * texture.width + dx) * 4;
                 if format == gl::BGRA_EXT {
                     texture.pixels[d..d + 4].copy_from_slice(&[
-                        *src.add(2), *src.add(1), *src, *src.add(3),
+                        *src.add(2),
+                        *src.add(1),
+                        *src,
+                        *src.add(3),
                     ]);
                 } else {
-                    texture.pixels[d..d + channels].copy_from_slice(std::slice::from_raw_parts(src, channels));
-                    if channels == 3 { texture.pixels[d + 3] = 255; }
+                    texture.pixels[d..d + channels]
+                        .copy_from_slice(std::slice::from_raw_parts(src, channels));
+                    if channels == 3 {
+                        texture.pixels[d + 3] = 255;
+                    }
                 }
             }
         }
@@ -2035,7 +2116,13 @@ impl GLES for SoftwareGLES<'_> {
         let size = self.state.buffers.get(&id).map_or(0, Vec::len) as GLint;
         *params = match pname {
             gl::BUFFER_SIZE => size,
-            GL_BUFFER_ACCESS => if self.state.mapped_buffers.contains(&id) { gl::WRITE_ONLY_OES as GLint } else { 0 },
+            GL_BUFFER_ACCESS => {
+                if self.state.mapped_buffers.contains(&id) {
+                    gl::WRITE_ONLY_OES as GLint
+                } else {
+                    0
+                }
+            }
             GL_BUFFER_MAPPED => self.state.mapped_buffers.contains(&id) as GLint,
             _ => {
                 self.state.error(gl::INVALID_ENUM);
@@ -2206,8 +2293,14 @@ impl GLES for SoftwareGLES<'_> {
         }
         if self.state.bound_framebuffer == 0 {
             gl::FRAMEBUFFER_COMPLETE_OES
-        } else if self.state.framebuffer_color.contains_key(&self.state.bound_framebuffer)
-            || self.state.framebuffer_texture.contains_key(&self.state.bound_framebuffer)
+        } else if self
+            .state
+            .framebuffer_color
+            .contains_key(&self.state.bound_framebuffer)
+            || self
+                .state
+                .framebuffer_texture
+                .contains_key(&self.state.bound_framebuffer)
         {
             gl::FRAMEBUFFER_COMPLETE_OES
         } else {
@@ -2263,7 +2356,9 @@ impl GLES for SoftwareGLES<'_> {
         }
         let size = (width as usize, height as usize);
         if self.state.bound_renderbuffer != 0 {
-            self.state.renderbuffer_sizes.insert(self.state.bound_renderbuffer, size);
+            self.state
+                .renderbuffer_sizes
+                .insert(self.state.bound_renderbuffer, size);
         }
         self.state.width = size.0;
         self.state.height = size.1;
@@ -2292,10 +2387,14 @@ impl GLES for SoftwareGLES<'_> {
         }
         match attachment {
             gl::COLOR_ATTACHMENT0_OES => {
-                self.state.framebuffer_color.insert(self.state.bound_framebuffer, renderbuffer);
+                self.state
+                    .framebuffer_color
+                    .insert(self.state.bound_framebuffer, renderbuffer);
             }
             gl::DEPTH_ATTACHMENT_OES => {
-                self.state.framebuffer_depth.insert(self.state.bound_framebuffer, renderbuffer);
+                self.state
+                    .framebuffer_depth
+                    .insert(self.state.bound_framebuffer, renderbuffer);
             }
             _ => self.state.error(gl::INVALID_ENUM),
         }
@@ -2316,7 +2415,9 @@ impl GLES for SoftwareGLES<'_> {
             self.state.error(gl::INVALID_OPERATION);
             return;
         }
-        self.state.framebuffer_texture.insert(self.state.bound_framebuffer, texture);
+        self.state
+            .framebuffer_texture
+            .insert(self.state.bound_framebuffer, texture);
     }
     unsafe fn GetFramebufferAttachmentParameterivOES(
         &mut self,
@@ -2335,8 +2436,18 @@ impl GLES for SoftwareGLES<'_> {
             return;
         }
         let object = match attachment {
-            gl::COLOR_ATTACHMENT0_OES => self.state.framebuffer_color.get(&self.state.bound_framebuffer).copied().unwrap_or(0),
-            gl::DEPTH_ATTACHMENT_OES => self.state.framebuffer_depth.get(&self.state.bound_framebuffer).copied().unwrap_or(0),
+            gl::COLOR_ATTACHMENT0_OES => self
+                .state
+                .framebuffer_color
+                .get(&self.state.bound_framebuffer)
+                .copied()
+                .unwrap_or(0),
+            gl::DEPTH_ATTACHMENT_OES => self
+                .state
+                .framebuffer_depth
+                .get(&self.state.bound_framebuffer)
+                .copied()
+                .unwrap_or(0),
             _ => {
                 self.state.error(gl::INVALID_ENUM);
                 0
@@ -2344,7 +2455,13 @@ impl GLES for SoftwareGLES<'_> {
         };
         *params = match pname {
             gl::FRAMEBUFFER_ATTACHMENT_OBJECT_NAME_OES => object as GLint,
-            gl::FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE_OES => if object != 0 { gl::RENDERBUFFER_OES as GLint } else { 0 },
+            gl::FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE_OES => {
+                if object != 0 {
+                    gl::RENDERBUFFER_OES as GLint
+                } else {
+                    0
+                }
+            }
             _ => {
                 self.state.error(gl::INVALID_ENUM);
                 0
@@ -2366,7 +2483,12 @@ impl GLES for SoftwareGLES<'_> {
             *params = 0;
             return;
         }
-        let (width, height) = self.state.renderbuffer_sizes.get(&self.state.bound_renderbuffer).copied().unwrap_or((self.state.width, self.state.height));
+        let (width, height) = self
+            .state
+            .renderbuffer_sizes
+            .get(&self.state.bound_renderbuffer)
+            .copied()
+            .unwrap_or((self.state.width, self.state.height));
         *params = match pname {
             gl::RENDERBUFFER_WIDTH_OES => width as GLint,
             gl::RENDERBUFFER_HEIGHT_OES => height as GLint,

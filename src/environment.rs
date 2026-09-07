@@ -581,8 +581,8 @@ impl Environment {
         let mut dyld = dyld::Dyld::new();
         dyld.do_initial_linking(&bundle, &bins, &mut mem, &mut objc);
 
-        let direct_memory_access = options.direct_memory_access
-            && bundle.bundle_identifier() != "com.dvloper.granny";
+        let direct_memory_access =
+            options.direct_memory_access && bundle.bundle_identifier() != "com.dvloper.granny";
         if options.direct_memory_access && !direct_memory_access {
             log!("Disabling direct memory access for Granny: Unity's startup worker touches nil ObjC state that is unsafe with the direct Dynarmic mapping.");
         }
@@ -881,8 +881,8 @@ impl Environment {
 
         dyld.do_initial_linking_with_no_bins(&mut mem, &mut objc);
 
-        let direct_memory_access = options.direct_memory_access
-            && bundle.bundle_identifier() != "com.dvloper.granny";
+        let direct_memory_access =
+            options.direct_memory_access && bundle.bundle_identifier() != "com.dvloper.granny";
         if options.direct_memory_access && !direct_memory_access {
             log!("Disabling direct memory access for Granny: Unity's startup worker touches nil ObjC state that is unsafe with the direct Dynarmic mapping.");
         }

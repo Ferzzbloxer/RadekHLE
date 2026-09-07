@@ -142,6 +142,160 @@ impl GraphicsApi {
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum TextureFiltering {
+    Default,
+    Bilinear,
+    Trilinear,
+    Anisotropic,
+}
+
+impl Default for TextureFiltering {
+    fn default() -> Self {
+        Self::Default
+    }
+}
+
+impl TextureFiltering {
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "default" => Ok(Self::Default),
+            "bilinear" => Ok(Self::Bilinear),
+            "trilinear" => Ok(Self::Trilinear),
+            "anisotropic" | "anistropic" => Ok(Self::Anisotropic),
+            _ => Err(format!("Invalid texture filtering {value:?}")),
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::Bilinear => "bilinear",
+            Self::Trilinear => "trilinear",
+            Self::Anisotropic => "anisotropic",
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum MemoryManagement {
+    Light,
+    Balanced,
+    Aggressive,
+}
+
+impl Default for MemoryManagement {
+    fn default() -> Self {
+        Self::Balanced
+    }
+}
+
+impl MemoryManagement {
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "light" => Ok(Self::Light),
+            "balanced" => Ok(Self::Balanced),
+            "aggressive" | "aggresive" => Ok(Self::Aggressive),
+            _ => Err(format!("Invalid memory management mode {value:?}")),
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Light => "light",
+            Self::Balanced => "balanced",
+            Self::Aggressive => "aggressive",
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum GlesOverrideVersion {
+    Default,
+    Gles10,
+    Gles11,
+    Gles20,
+    Gles30,
+    Gles31,
+    Gles32,
+    Metal,
+}
+
+impl Default for GlesOverrideVersion {
+    fn default() -> Self {
+        Self::Default
+    }
+}
+
+impl GlesOverrideVersion {
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "default" => Ok(Self::Default),
+            "gles1.0" | "gles10" => Ok(Self::Gles10),
+            "gles1.1" | "gles11" => Ok(Self::Gles11),
+            "gles2" | "gles2.0" | "gles20" => Ok(Self::Gles20),
+            "gles3.0" | "gles30" => Ok(Self::Gles30),
+            "gles3.1" | "gles31" => Ok(Self::Gles31),
+            "gles3.2" | "gles32" => Ok(Self::Gles32),
+            "metal" => Ok(Self::Metal),
+            _ => Err(format!("Invalid GLES override version {value:?}")),
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::Gles10 => "gles1.0",
+            Self::Gles11 => "gles1.1",
+            Self::Gles20 => "gles2",
+            Self::Gles30 => "3.0",
+            Self::Gles31 => "3.1",
+            Self::Gles32 => "3.2",
+            Self::Metal => "Metal",
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum AudioBackend {
+    Default,
+    OpenSlEs,
+    AAudio,
+}
+
+impl Default for AudioBackend {
+    fn default() -> Self {
+        Self::Default
+    }
+}
+
+impl AudioBackend {
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "default" => Ok(Self::Default),
+            "opensl-es" | "opensles" | "open-sl-es" => Ok(Self::OpenSlEs),
+            "aaudio" => Ok(Self::AAudio),
+            _ => Err(format!("Invalid audio backend {value:?}")),
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::OpenSlEs => "OpenSL ES",
+            Self::AAudio => "AAudio",
+        }
+    }
+
+    pub fn driver_name(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::OpenSlEs => "opensl",
+            Self::AAudio => "aaudio",
+        }
+    }
+}
+
 /// Rotation applied to rendered pixels without changing the emulated device orientation.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum RenderRotation {
@@ -204,6 +358,7 @@ pub struct Options {
     pub ios_version: Option<(i32, i32, i32)>,
     /// Prefer OpenAL Soft's PulseAudio backend on Linux when enabled.
     pub pulse_audio: bool,
+    pub audio_backend: AudioBackend,
     pub scale_hack: f32,
     pub deadzone: f32,
     pub analog_stick_tilt_controls: bool,
@@ -220,6 +375,7 @@ pub struct Options {
     /// through touchHLE's desktop OpenGL 2.1 compatibility backend.
     pub gles2_compat: bool,
     pub graphics_api: GraphicsApi,
+    pub gles_override_version: GlesOverrideVersion,
     pub angle_driver: bool,
     pub log_file: bool,
     pub fast_memory: bool,
@@ -236,6 +392,8 @@ pub struct Options {
     pub print_fps: bool,
     pub fps_limit: Option<f64>,
     pub frame_pacing: bool,
+    pub vsync: bool,
+    pub battery_saver: bool,
     /// Generate presentation frames up to the host display refresh rate. Disabled by default.
     pub frame_generation: bool,
     /// Apply a safe, visual-only accelerating corruption effect to presented frames.
@@ -269,6 +427,7 @@ pub struct Options {
     /// `glGetError()` clears the error queue, so guest `glGetError()` calls
     /// will see 0 instead of the real error. Diagnostic only.
     pub trace_gl_errors: bool,
+    pub verbose_logging: bool,
     /// After a `glTexImage2D(level=0, …)` upload, if the bound texture's
     /// `GL_TEXTURE_MIN_FILTER` is still the ES 1.1 default
     /// `GL_NEAREST_MIPMAP_LINEAR` (which makes the texture incomplete
@@ -289,7 +448,9 @@ pub struct Options {
     pub software_rendering: bool,
     pub anisotropic_filtering: u8,
     pub texture_upscaler: u8,
+    pub texture_filtering: TextureFiltering,
     pub no_texture_compression: bool,
+    pub memory_management: MemoryManagement,
     pub anti_aliasing: u8,
     pub software_presentation: bool,
     pub custom_driver: Option<PathBuf>,
@@ -310,6 +471,7 @@ impl Default for Options {
             revert_y_axis: false,
             ios_version: None,
             pulse_audio: false,
+            audio_backend: AudioBackend::Default,
             scale_hack: 1.0,
             analog_stick_tilt_controls: true,
             deadzone: 0.1,
@@ -324,6 +486,7 @@ impl Default for Options {
             gles1_implementation: None,
             gles2_compat: false,
             graphics_api: GraphicsApi::Default,
+            gles_override_version: GlesOverrideVersion::Default,
             angle_driver: false,
             log_file: true,
             fast_memory: true,
@@ -340,6 +503,8 @@ impl Default for Options {
             print_fps: false,
             fps_limit: None, // Follow the host display; legacy apps can still opt into a fixed cap.
             frame_pacing: true,
+            vsync: false,
+            battery_saver: false,
             frame_generation: false,
             rtcs: false,
             force_composition: false,
@@ -350,11 +515,14 @@ impl Default for Options {
             dumping_file: crate::paths::user_data_base_path().join("DUMP.txt"),
             ignore_gl_errors: false,
             trace_gl_errors: false,
+            verbose_logging: false,
             fix_texture_min_filter: cfg!(target_os = "android"),
             software_rendering: false,
             anisotropic_filtering: 1,
             texture_upscaler: 1,
+            texture_filtering: TextureFiltering::Default,
             no_texture_compression: false,
+            memory_management: MemoryManagement::Balanced,
             anti_aliasing: 1,
             software_presentation: false,
             custom_driver: None,
@@ -431,6 +599,8 @@ impl Options {
             self.pulse_audio = true;
         } else if arg == "--disable-pulse-audio" {
             self.pulse_audio = false;
+        } else if let Some(value) = arg.strip_prefix("--audio-backend=") {
+            self.audio_backend = AudioBackend::parse(value)?;
         } else if let Some(value) = arg.strip_prefix("--screen-size=") {
             let (w, h) = value
                 .split_once(|c| c == 'x' || c == 'X' || c == ',')
@@ -460,7 +630,9 @@ impl Options {
                 .parse()
                 .map_err(|_| "Invalid height for --custom-resolution=".to_string())?;
             if !(64..=16384).contains(&w) || !(64..=16384).contains(&h) {
-                return Err("--custom-resolution= dimensions must be between 64 and 16384".to_string());
+                return Err(
+                    "--custom-resolution= dimensions must be between 64 and 16384".to_string(),
+                );
             }
             self.custom_screen_size = Some((w, h));
             self.host_screen_size = Some((w, h));
@@ -566,7 +738,10 @@ impl Options {
             self.software_presentation = false;
         } else if let Some(value) = arg.strip_prefix("--custom-driver=") {
             let value = value.trim();
-            if value.is_empty() || value.eq_ignore_ascii_case("off") || value.eq_ignore_ascii_case("none") {
+            if value.is_empty()
+                || value.eq_ignore_ascii_case("off")
+                || value.eq_ignore_ascii_case("none")
+            {
                 self.custom_driver = None;
             } else {
                 self.custom_driver = Some(PathBuf::from(value));
@@ -574,15 +749,22 @@ impl Options {
         } else if arg == "--disable-custom-driver" {
             self.custom_driver = None;
         } else if let Some(value) = arg.strip_prefix("--anisotropic-filtering=") {
-            self.anisotropic_filtering = parse_quality(value, "--anisotropic-filtering=", &[1, 2, 4, 8, 16])?;
+            self.anisotropic_filtering =
+                parse_quality(value, "--anisotropic-filtering=", &[1, 2, 4, 8, 16])?;
         } else if let Some(value) = arg.strip_prefix("--texture-upscaler=") {
             self.texture_upscaler = parse_quality(value, "--texture-upscaler=", &[1, 2, 3, 4])?;
+        } else if let Some(value) = arg.strip_prefix("--texture-filtering=") {
+            self.texture_filtering = TextureFiltering::parse(value)?;
         } else if arg == "--no-texture-compression" {
             self.no_texture_compression = true;
         } else if arg == "--allow-texture-compression" {
             self.no_texture_compression = false;
+        } else if let Some(value) = arg.strip_prefix("--memory-management=") {
+            self.memory_management = MemoryManagement::parse(value)?;
         } else if let Some(value) = arg.strip_prefix("--anti-aliasing=") {
             self.anti_aliasing = parse_quality(value, "--anti-aliasing=", &[1, 2, 4, 8])?;
+        } else if let Some(value) = arg.strip_prefix("--gles-override=") {
+            self.gles_override_version = GlesOverrideVersion::parse(value)?;
         } else if let Some(value) = arg.strip_prefix("--graphics-api=") {
             let api = GraphicsApi::from_short_name(value)
                 .map_err(|_| "Unrecognized --graphics-api= value".to_string())?;
@@ -590,6 +772,8 @@ impl Options {
                 return Err("Software rendering is controlled by --software-rendering".to_string());
             }
             self.graphics_api = api;
+        } else if let Some(value) = arg.strip_prefix("--gles-override-version=") {
+            self.gles_override_version = GlesOverrideVersion::parse(value)?;
         } else if arg == "--angle-driver" {
             self.angle_driver = true;
         } else if arg == "--disable-angle-driver" {
@@ -622,6 +806,14 @@ impl Options {
             self.frame_pacing = true;
         } else if arg == "--disable-frame-pacing" {
             self.frame_pacing = false;
+        } else if arg == "--vsync" || arg == "--vsync=on" {
+            self.vsync = true;
+        } else if arg == "--disable-vsync" || arg == "--vsync=off" {
+            self.vsync = false;
+        } else if arg == "--battery-saver" || arg == "--battery-saver=on" {
+            self.battery_saver = true;
+        } else if arg == "--disable-battery-saver" || arg == "--battery-saver=off" {
+            self.battery_saver = false;
         } else if arg == "--frame-generation" || arg == "--frame-generation=on" {
             self.frame_generation = true;
         } else if arg == "--disable-frame-generation" || arg == "--frame-generation=off" {
@@ -681,6 +873,10 @@ impl Options {
             self.trace_gl_errors = true;
         } else if arg == "--disable-trace-gl-errors" {
             self.trace_gl_errors = false;
+        } else if arg == "--verbose-logging" {
+            self.verbose_logging = true;
+        } else if arg == "--disable-verbose-logging" {
+            self.verbose_logging = false;
         } else if arg == "--fix-texture-min-filter" {
             self.fix_texture_min_filter = true;
         } else if arg == "--no-fix-texture-min-filter" {

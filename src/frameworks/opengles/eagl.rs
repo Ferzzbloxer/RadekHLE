@@ -851,7 +851,8 @@ unsafe fn present_renderbuffer_readback(env: &mut Environment, drawable: id) {
     };
     if env.window().is_frame_generation_enabled() {
         log_once!("Frame generation: capturing GPU renderbuffers for interpolation on the native, translated, and shader GLES paths");
-        env.window_mut().present_native_frame(pixels, width, height, true);
+        env.window_mut()
+            .present_native_frame(pixels, width, height, true);
         return;
     }
     present_pixels(env, drawable, pixels, width, height);

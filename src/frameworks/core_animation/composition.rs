@@ -100,21 +100,31 @@ pub fn recomposite_if_necessary(env: &mut Environment, force: bool) -> Option<In
     }
 
     let now = Instant::now();
-    let interval = if env.options.frame_pacing {
-        env.options
-            .fps_limit
-            .map(|fps| 1.0 / fps)
-            .unwrap_or(1.0 / 60.0)
+    let display_rate = env.window().display_refresh_rate().max(1.0);
+    let configured_rate = env.options.fps_limit.unwrap_or(display_rate);
+    let capped_rate = if env.options.vsync {
+        configured_rate.min(display_rate)
+    } else {
+        configured_rate
+    };
+    let capped_rate = if env.options.battery_saver {
+        capped_rate.min(30.0)
+    } else {
+        capped_rate
+    };
+    let pacing_enabled = env.options.frame_pacing || env.options.vsync || env.options.battery_saver;
+    let interval = if pacing_enabled {
+        1.0 / capped_rate.max(1.0)
     } else {
         0.0
     };
-    if !env.options.frame_pacing {
+    if !pacing_enabled {
         env.framework_state
             .core_animation
             .composition
             .recomposite_next = None;
     }
-    let new_recomposite_next = if !env.options.frame_pacing {
+    let new_recomposite_next = if !pacing_enabled {
         None
     } else if let Some(recomposite_next) = env
         .framework_state
@@ -131,7 +141,11 @@ pub fn recomposite_if_necessary(env: &mut Environment, force: bool) -> Option<In
         let overdue_by = now.duration_since(recomposite_next);
         log_dbg!("Recompositing, overdue by {:?}", overdue_by);
         // TODO: Use `.div_duration_f64()` once that is stabilized.
-        let advance_by = (overdue_by.as_secs_f64() / interval).max(1.0).ceil();
+        let advance_by = if interval <= 0.0 {
+            1.0
+        } else {
+            (overdue_by.as_secs_f64() / interval).max(1.0).ceil()
+        };
         assert!(advance_by == (advance_by as u32) as f64);
         let advance_by = advance_by as u32;
         if advance_by > 1 {

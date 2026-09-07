@@ -23,8 +23,8 @@
 // ============================================================
 
 use al_sys::alc_types::{ALCcontext, ALCdevice};
-use std::marker::PhantomData;
 use std::ffi::CStr;
+use std::marker::PhantomData;
 use touchHLE_openal_soft_wrapper as al_sys;
 use touchHLE_openal_soft_wrapper::alc_types::ALCint;
 
@@ -74,6 +74,32 @@ fn ensure_openal_backend_available() {
     // Respect any user-provided override.
     if std::env::var_os("ALSOFT_DRIVERS").is_some() {
         return;
+    }
+
+    let requested_backend = std::env::var("TOUCHHLE_AUDIO_BACKEND").unwrap_or_default();
+    if requested_backend == "opensl" {
+        if cfg!(target_os = "android") {
+            unsafe {
+                std::env::set_var("ALSOFT_DRIVERS", "opensl");
+            }
+            log!("Audio backend selected: OpenSL ES");
+            return;
+        }
+        log!("OpenSL ES was selected, but this platform has no OpenSL ES backend; using the host default");
+    } else if requested_backend == "aaudio" {
+        if cfg!(target_os = "android") {
+            // The bundled OpenAL Soft build does not expose an AAudio backend.
+            // Prefer its native OpenSL ES path instead of silently selecting a
+            // desktop backend or failing the whole emulator at audio startup.
+            unsafe {
+                std::env::set_var("ALSOFT_DRIVERS", "opensl");
+            }
+            log!("AAudio was selected; bundled OpenAL Soft has no AAudio driver, using its Android OpenSL ES compatibility backend");
+            return;
+        }
+        log!(
+            "AAudio was selected, but this platform has no AAudio backend; using the host default"
+        );
     }
 
     if cfg!(target_os = "linux") && std::env::var_os("TOUCHHLE_PULSE_AUDIO").is_some() {

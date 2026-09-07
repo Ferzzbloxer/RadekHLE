@@ -87,7 +87,11 @@ fn task_get_exception_ports(
         return KERN_INVALID_ARGUMENT;
     }
     let capacity = env.mem.read(masks_cnt);
-    let count = if exception_mask & EXC_MASK_BAD_ACCESS != 0 { 0 } else { 0 };
+    let count = if exception_mask & EXC_MASK_BAD_ACCESS != 0 {
+        0
+    } else {
+        0
+    };
     if capacity > 0 {
         if !masks.is_null() {
             env.mem.write(masks, 0);

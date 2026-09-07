@@ -129,7 +129,9 @@ mod collections {
         }
 
         pub fn iter(&self) -> impl Iterator<Item = Chunk> + '_ {
-            self.chunks.iter().map(|(&base, &size)| Chunk { base, size })
+            self.chunks
+                .iter()
+                .map(|(&base, &size)| Chunk { base, size })
         }
         #[inline(always)]
         pub fn get_size_with_base(&self, base: VAddr) -> Option<NonZeroU32> {

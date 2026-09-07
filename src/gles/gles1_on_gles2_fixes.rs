@@ -58,12 +58,24 @@ impl MatrixFixer {
         match mode {
             RotationFixMode::Aggressive => {
                 Self::fix_rotation_cw(matrix);
-                Self::log_fix(logger, 1, "axis swap disabled to avoid a second coordinate remap");
-                Self::log_fix(logger, 2, "Y inversion disabled to avoid a second coordinate remap");
+                Self::log_fix(
+                    logger,
+                    1,
+                    "axis swap disabled to avoid a second coordinate remap",
+                );
+                Self::log_fix(
+                    logger,
+                    2,
+                    "Y inversion disabled to avoid a second coordinate remap",
+                );
                 Self::log_fix(logger, 3, "screen rotation applied (clockwise_90) [first]");
                 Self::fix_rotation_cw(matrix);
                 Self::log_fix(logger, 3, "screen rotation applied (clockwise_90) [second]");
-                Self::log_fix(logger, 4, "horizontal flip disabled after blackscreen regression");
+                Self::log_fix(
+                    logger,
+                    4,
+                    "horizontal flip disabled after blackscreen regression",
+                );
             }
             RotationFixMode::Clockwise => {
                 Self::fix_rotation_cw(matrix);
@@ -89,7 +101,11 @@ impl MatrixFixer {
         }
 
         Self::log_fix(logger, 5, "transpose skipped for column-major matrices");
-        Self::log_fix(logger, 6, "Z axis preserved; scale normalised without changing guest scale factors");
+        Self::log_fix(
+            logger,
+            6,
+            "Z axis preserved; scale normalised without changing guest scale factors",
+        );
         Self::log_fix(
             logger,
             7,
@@ -220,8 +236,14 @@ mod tests {
         let mut matrix = identity();
         MatrixFixer::fix_rotation_cw(&mut matrix);
         MatrixFixer::fix_rotation_cw(&mut matrix);
-        assert_eq!([matrix[2], matrix[6], matrix[10], matrix[14]], [0.0, 0.0, 1.0, 0.0]);
-        assert_eq!([matrix[3], matrix[7], matrix[11], matrix[15]], [0.0, 0.0, 0.0, 1.0]);
+        assert_eq!(
+            [matrix[2], matrix[6], matrix[10], matrix[14]],
+            [0.0, 0.0, 1.0, 0.0]
+        );
+        assert_eq!(
+            [matrix[3], matrix[7], matrix[11], matrix[15]],
+            [0.0, 0.0, 0.0, 1.0]
+        );
     }
 
     #[test]
@@ -230,7 +252,10 @@ mod tests {
         let logger = GLES1to2Logger::new("test", "test");
         let result = apply_render_rotation(&mut matrix, RenderRotation::Plus90, &logger);
         assert_eq!(result, screen_rotation_counter_clockwise());
-        assert_eq!([result[2], result[6], result[10], result[14]], [0.0, 0.0, 1.0, 0.0]);
+        assert_eq!(
+            [result[2], result[6], result[10], result[14]],
+            [0.0, 0.0, 1.0, 0.0]
+        );
         logger.finish();
     }
 

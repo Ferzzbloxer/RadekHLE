@@ -282,13 +282,22 @@ impl GLES1to2Logger {
 
     pub fn log_stage(&self, stage: &str, details: &str) {
         if enabled() {
-            log!("[GLES1→GLES2 PIPELINE] op={} stage={} {}", self.operation_id, stage, details);
+            log!(
+                "[GLES1→GLES2 PIPELINE] op={} stage={} {}",
+                self.operation_id,
+                stage,
+                details
+            );
         }
     }
 
     pub fn log_error(&self, error: u32) {
         if enabled() {
-            log!("[GLES1→GLES2 PIPELINE] op={} gl_error=0x{:x}", self.operation_id, error);
+            log!(
+                "[GLES1→GLES2 PIPELINE] op={} gl_error=0x{:x}",
+                self.operation_id,
+                error
+            );
         }
     }
 }
@@ -356,30 +365,41 @@ struct GLStateManager {
     drawable_size: (u32, u32),
     last_updated: Instant,
     change_count: u64,
-    last_pipeline_log: Option<((i32, i32, i32, i32), (i32, i32, i32, i32), (u32, u32), (u32, u32))>,
+    last_pipeline_log: Option<(
+        (i32, i32, i32, i32),
+        (i32, i32, i32, i32),
+        (u32, u32),
+        (u32, u32),
+    )>,
 }
 
 static VIEWPORT_STATE_GLOBAL: OnceLock<Mutex<GLStateManager>> = OnceLock::new();
 fn viewport_state() -> &'static Mutex<GLStateManager> {
-    VIEWPORT_STATE_GLOBAL.get_or_init(|| Mutex::new(GLStateManager {
-        current_viewport: (0, 0, 0, 0),
-        previous_viewport: (0, 0, 0, 0),
-        current_scissor: (0, 0, 0, 0),
-        previous_scissor: (0, 0, 0, 0),
-        viewport_changed: false,
-        scissor_changed: false,
-        scissor_was_explicitly_set: false,
-        last_gpu_verify: None,
-        scissor_test_enabled: false,
-        logical_size: (480, 320),
-        drawable_size: (0, 0),
-        last_updated: Instant::now(),
-        change_count: 0,
-        last_pipeline_log: None,
-    }))
+    VIEWPORT_STATE_GLOBAL.get_or_init(|| {
+        Mutex::new(GLStateManager {
+            current_viewport: (0, 0, 0, 0),
+            previous_viewport: (0, 0, 0, 0),
+            current_scissor: (0, 0, 0, 0),
+            previous_scissor: (0, 0, 0, 0),
+            viewport_changed: false,
+            scissor_changed: false,
+            scissor_was_explicitly_set: false,
+            last_gpu_verify: None,
+            scissor_test_enabled: false,
+            logical_size: (480, 320),
+            drawable_size: (0, 0),
+            last_updated: Instant::now(),
+            change_count: 0,
+            last_pipeline_log: None,
+        })
+    })
 }
 
-pub fn log_viewport_state_change(change_count: u64, old_viewport: (i32, i32, i32, i32), new_viewport: (i32, i32, i32, i32)) {
+pub fn log_viewport_state_change(
+    change_count: u64,
+    old_viewport: (i32, i32, i32, i32),
+    new_viewport: (i32, i32, i32, i32),
+) {
     if !enabled() || old_viewport == new_viewport {
         return;
     }
@@ -428,7 +448,17 @@ pub fn update_scissor_state(scissor: (i32, i32, i32, i32)) {
     state.last_updated = Instant::now();
     drop(state);
     if old != scissor && enabled() {
-        log!("[SCISSOR STATE CHANGE] old=({},{},{},{}) new=({},{},{},{})", old.0, old.1, old.2, old.3, scissor.0, scissor.1, scissor.2, scissor.3);
+        log!(
+            "[SCISSOR STATE CHANGE] old=({},{},{},{}) new=({},{},{},{})",
+            old.0,
+            old.1,
+            old.2,
+            old.3,
+            scissor.0,
+            scissor.1,
+            scissor.2,
+            scissor.3
+        );
     }
 }
 
@@ -455,7 +485,17 @@ pub fn sync_scissor_to_viewport() -> Option<(i32, i32, i32, i32)> {
     let viewport = state.current_viewport;
     drop(state);
     if enabled() {
-        log!("[SCISSOR SYNC] old=({},{},{},{}) new=({},{},{},{})", old.0, old.1, old.2, old.3, viewport.0, viewport.1, viewport.2, viewport.3);
+        log!(
+            "[SCISSOR SYNC] old=({},{},{},{}) new=({},{},{},{})",
+            old.0,
+            old.1,
+            old.2,
+            old.3,
+            viewport.0,
+            viewport.1,
+            viewport.2,
+            viewport.3
+        );
     }
     Some(viewport)
 }
@@ -465,8 +505,16 @@ pub fn log_pipeline_state(label: &str) {
         return;
     }
     let mut state = viewport_state().lock().unwrap();
-    let snapshot = (state.current_viewport, state.current_scissor, state.logical_size, state.drawable_size);
-    if !state.viewport_changed && !state.scissor_changed && state.last_pipeline_log == Some(snapshot) {
+    let snapshot = (
+        state.current_viewport,
+        state.current_scissor,
+        state.logical_size,
+        state.drawable_size,
+    );
+    if !state.viewport_changed
+        && !state.scissor_changed
+        && state.last_pipeline_log == Some(snapshot)
+    {
         return;
     }
     state.last_pipeline_log = Some(snapshot);
@@ -487,10 +535,29 @@ pub fn log_projection_matrix(label: &str, matrix: &[f32; 16]) {
     }
     let is_ortho = (matrix[15] - 1.0).abs() < f32::EPSILON;
     let is_perspective = (matrix[11].abs() - 1.0).abs() < f32::EPSILON;
-    let kind = if is_ortho { "ORTHOGRAPHIC" } else if is_perspective { "PERSPECTIVE" } else { "UNKNOWN" };
-    log!("[PROJECTION MATRIX] label={} type={} determinant={:.6}", label, kind, determinant(matrix));
+    let kind = if is_ortho {
+        "ORTHOGRAPHIC"
+    } else if is_perspective {
+        "PERSPECTIVE"
+    } else {
+        "UNKNOWN"
+    };
+    log!(
+        "[PROJECTION MATRIX] label={} type={} determinant={:.6}",
+        label,
+        kind,
+        determinant(matrix)
+    );
     for row in 0..4 {
-        log!("[PROJECTION MATRIX] label={} row={} values=({:.6},{:.6},{:.6},{:.6})", label, row, matrix[row], matrix[row + 4], matrix[row + 8], matrix[row + 12]);
+        log!(
+            "[PROJECTION MATRIX] label={} row={} values=({:.6},{:.6},{:.6},{:.6})",
+            label,
+            row,
+            matrix[row],
+            matrix[row + 4],
+            matrix[row + 8],
+            matrix[row + 12]
+        );
     }
     if is_ortho && matrix[0] != 0.0 && matrix[5] != 0.0 && matrix[10] != 0.0 {
         let left = (matrix[12] + 1.0) / matrix[0];
@@ -519,10 +586,12 @@ pub fn verify_viewport_state_in_gpu() {
     }
     let gpu_state = (viewport, scissor);
     let mut state = viewport_state().lock().unwrap();
-    if state.last_gpu_verify == Some((
-        (viewport[0], viewport[1], viewport[2], viewport[3]),
-        (scissor[0], scissor[1], scissor[2], scissor[3]),
-    )) {
+    if state.last_gpu_verify
+        == Some((
+            (viewport[0], viewport[1], viewport[2], viewport[3]),
+            (scissor[0], scissor[1], scissor[2], scissor[3]),
+        ))
+    {
         return;
     }
     state.last_gpu_verify = Some((
@@ -530,7 +599,17 @@ pub fn verify_viewport_state_in_gpu() {
         (scissor[0], scissor[1], scissor[2], scissor[3]),
     ));
     drop(state);
-    log!("[GPU STATE VERIFY] viewport=({},{},{},{}) scissor=({},{},{},{})", gpu_state.0[0], gpu_state.0[1], gpu_state.0[2], gpu_state.0[3], gpu_state.1[0], gpu_state.1[1], gpu_state.1[2], gpu_state.1[3]);
+    log!(
+        "[GPU STATE VERIFY] viewport=({},{},{},{}) scissor=({},{},{},{})",
+        gpu_state.0[0],
+        gpu_state.0[1],
+        gpu_state.0[2],
+        gpu_state.0[3],
+        gpu_state.1[0],
+        gpu_state.1[1],
+        gpu_state.1[2],
+        gpu_state.1[3]
+    );
 }
 
 pub fn log_gl_state_initialized() {

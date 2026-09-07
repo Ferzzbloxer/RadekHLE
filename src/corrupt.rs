@@ -14,7 +14,10 @@ impl Corruptor {
         }
         self.frames = self.frames.wrapping_add(1);
         if self.frames % 1800 == 0 {
-            log_dbg!("[RTCS] safe presentation-only corruption remains active after {} frames", self.frames);
+            log_dbg!(
+                "[RTCS] safe presentation-only corruption remains active after {} frames",
+                self.frames
+            );
         }
     }
 }

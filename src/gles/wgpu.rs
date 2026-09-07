@@ -89,7 +89,11 @@ impl WgpuPresentation {
                 true,
             )
         };
-        log!("WGPU backend candidates: {:?}, native surface: {}", backends, use_surface);
+        log!(
+            "WGPU backend candidates: {:?}, native surface: {}",
+            backends,
+            use_surface
+        );
         Self::new_with_backends(window, backends, use_surface)
     }
 
@@ -136,13 +140,11 @@ impl WgpuPresentation {
             log!("WGPU Android path is offscreen to avoid competing with SDL's EGL window surface");
             None
         };
-        let adapter = pollster::block_on(instance.request_adapter(
-            &wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                force_fallback_adapter: false,
-                compatible_surface: surface.as_ref(),
-            },
-        ))
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            force_fallback_adapter: false,
+            compatible_surface: surface.as_ref(),
+        }))
         .ok_or_else(|| "WGPU could not find an adapter for the requested path".to_string())?;
         let adapter_info = adapter.get_info();
         log!(
@@ -171,7 +173,9 @@ impl WgpuPresentation {
             },
             None,
         ))
-        .map_err(|error| format!("could not create WGPU device with adapter-compatible limits: {error}"))?;
+        .map_err(|error| {
+            format!("could not create WGPU device with adapter-compatible limits: {error}")
+        })?;
 
         let (format, present_mode, alpha_mode) = if let Some(surface) = surface.as_ref() {
             let capabilities = surface.get_capabilities(&adapter);
@@ -198,7 +202,10 @@ impl WgpuPresentation {
                     capabilities.usages
                 ));
             }
-            let present_mode = if capabilities.present_modes.contains(&wgpu::PresentMode::Fifo) {
+            let present_mode = if capabilities
+                .present_modes
+                .contains(&wgpu::PresentMode::Fifo)
+            {
                 wgpu::PresentMode::Fifo
             } else {
                 *capabilities
@@ -219,11 +226,7 @@ impl WgpuPresentation {
             };
             (format, Some(present_mode), Some(alpha_mode))
         } else {
-            (
-                wgpu::TextureFormat::Rgba8Unorm,
-                None,
-                None,
-            )
+            (wgpu::TextureFormat::Rgba8Unorm, None, None)
         };
         let (width, height) = window.drawable_size();
         let width = width.max(1);
@@ -354,12 +357,30 @@ impl WgpuPresentation {
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("RadekHLE WGPU frame vertices"),
             contents: bytemuck::cast_slice(&[
-                Vertex { position: [-1.0, -1.0], uv: [0.0, 1.0] },
-                Vertex { position: [1.0, -1.0], uv: [1.0, 1.0] },
-                Vertex { position: [1.0, 1.0], uv: [1.0, 0.0] },
-                Vertex { position: [-1.0, -1.0], uv: [0.0, 1.0] },
-                Vertex { position: [1.0, 1.0], uv: [1.0, 0.0] },
-                Vertex { position: [-1.0, 1.0], uv: [0.0, 0.0] },
+                Vertex {
+                    position: [-1.0, -1.0],
+                    uv: [0.0, 1.0],
+                },
+                Vertex {
+                    position: [1.0, -1.0],
+                    uv: [1.0, 1.0],
+                },
+                Vertex {
+                    position: [1.0, 1.0],
+                    uv: [1.0, 0.0],
+                },
+                Vertex {
+                    position: [-1.0, -1.0],
+                    uv: [0.0, 1.0],
+                },
+                Vertex {
+                    position: [1.0, 1.0],
+                    uv: [1.0, 0.0],
+                },
+                Vertex {
+                    position: [-1.0, 1.0],
+                    uv: [0.0, 0.0],
+                },
             ]),
             usage: wgpu::BufferUsages::VERTEX,
         });
@@ -406,9 +427,9 @@ impl WgpuPresentation {
                     return self.present_offscreen(pixels, width, height);
                 };
                 configure_surface(surface, &self.device, config)?;
-                surface
-                    .get_current_texture()
-                    .map_err(|error| format!("WGPU surface recovery failed after reconfiguration: {error}"))?
+                surface.get_current_texture().map_err(|error| {
+                    format!("WGPU surface recovery failed after reconfiguration: {error}")
+                })?
             }
             Err(wgpu::SurfaceError::Timeout) => {
                 log_dbg!("WGPU presentation skipped a timed-out surface frame");
@@ -438,7 +459,11 @@ impl WgpuPresentation {
 
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("RadekHLE WGPU uploaded frame"),
-            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -459,21 +484,35 @@ impl WgpuPresentation {
                 bytes_per_row: Some(width * 4),
                 rows_per_image: Some(height),
             },
-            wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
         );
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("RadekHLE WGPU uploaded frame bindings"),
             layout: &self.bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
             ],
         });
-        let output_view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("RadekHLE WGPU frame encoder"),
-        });
+        let output_view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("RadekHLE WGPU frame encoder"),
+            });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("RadekHLE WGPU frame pass"),
@@ -527,12 +566,18 @@ impl WgpuPresentation {
         if target_changed {
             let texture_desc = wgpu::TextureDescriptor {
                 label: Some("RadekHLE WGPU offscreen frame target"),
-                size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: self.target_format,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_DST
+                    | wgpu::TextureUsages::RENDER_ATTACHMENT,
                 view_formats: &[],
             };
             self.offscreen_input = Some(self.device.create_texture(&wgpu::TextureDescriptor {
@@ -550,10 +595,23 @@ impl WgpuPresentation {
         let input = self.offscreen_input.as_ref().unwrap();
         let target = self.offscreen_target.as_ref().unwrap();
         self.queue.write_texture(
-            wgpu::ImageCopyTexture { texture: input, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+            wgpu::ImageCopyTexture {
+                texture: input,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
             &pixels[..expected_len],
-            wgpu::ImageDataLayout { offset: 0, bytes_per_row: Some(width * 4), rows_per_image: Some(height) },
-            wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(width * 4),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
         );
         let input_view = input.create_view(&wgpu::TextureViewDescriptor::default());
         let target_view = target.create_view(&wgpu::TextureViewDescriptor::default());
@@ -561,18 +619,31 @@ impl WgpuPresentation {
             label: Some("RadekHLE WGPU offscreen frame bindings"),
             layout: &self.bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&input_view) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&input_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
             ],
         });
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("RadekHLE WGPU offscreen frame encoder") });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("RadekHLE WGPU offscreen frame encoder"),
+            });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("RadekHLE WGPU offscreen frame pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &target_view,
                     resolve_target: None,
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
                 })],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
@@ -585,7 +656,11 @@ impl WgpuPresentation {
         }
         self.queue.submit([encoder.finish()]);
         self.device.poll(wgpu::Maintain::Wait);
-        log_dbg!("WGPU offscreen presentation completed at {}x{} without a native surface", width, height);
+        log_dbg!(
+            "WGPU offscreen presentation completed at {}x{} without a native surface",
+            width,
+            height
+        );
         Ok(())
     }
 
@@ -598,7 +673,12 @@ impl WgpuPresentation {
     ) -> Result<(), String> {
         let expected_len = width as usize * height as usize * 4;
         if pixels.len() < expected_len {
-            return Err(format!("invalid WGPU frame dimensions {}x{} with {} bytes", width, height, pixels.len()));
+            return Err(format!(
+                "invalid WGPU frame dimensions {}x{} with {} bytes",
+                width,
+                height,
+                pixels.len()
+            ));
         }
         if bottom_up {
             let mut oriented = vec![0u8; expected_len];
@@ -625,12 +705,21 @@ impl WgpuPresentation {
     ) -> Result<(), String> {
         let expected_len = width as usize * height as usize * 4;
         if width == 0 || height == 0 || pixels.len() < expected_len {
-            return Err(format!("invalid WGPU frame dimensions {}x{} with {} bytes", width, height, pixels.len()));
+            return Err(format!(
+                "invalid WGPU frame dimensions {}x{} with {} bytes",
+                width,
+                height,
+                pixels.len()
+            ));
         }
         let mut current = vec![0u8; expected_len];
         let row_bytes = width as usize * 4;
         for y in 0..height as usize {
-            let source_y = if bottom_up { height as usize - y - 1 } else { y };
+            let source_y = if bottom_up {
+                height as usize - y - 1
+            } else {
+                y
+            };
             let source = source_y * row_bytes;
             let destination = y * row_bytes;
             current[destination..destination + row_bytes]
@@ -653,7 +742,8 @@ impl WgpuPresentation {
                     let mut generated = vec![0u8; expected_len];
                     for index in 0..expected_len {
                         generated[index] = ((previous[index] as u32 * inverse
-                            + current[index] as u32 * blend) >> 8) as u8;
+                            + current[index] as u32 * blend)
+                            >> 8) as u8;
                     }
                     self.present(&generated, width, height)?;
                 }

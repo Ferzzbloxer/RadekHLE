@@ -31,8 +31,8 @@ mod a64_runtime;
 mod abi;
 mod audio;
 mod bundle;
-mod cpu;
 mod corrupt;
+mod cpu;
 mod debug;
 mod dyld;
 mod environment;
@@ -52,8 +52,8 @@ mod mem;
 mod mem64;
 mod objc;
 mod options;
-mod perf;
 mod paths;
+mod perf;
 mod stack;
 mod window;
 
@@ -202,7 +202,9 @@ pub fn main<T: Iterator<Item = String>>(mut args: T) -> Result<(), String> {
             match options.parse_argument(option_arg) {
                 Ok(true) => (),
                 Ok(false) => log!("Warning: ignoring unknown generated option {option_arg:?}"),
-                Err(error) => log!("Warning: ignoring invalid generated option {option_arg:?}: {error}"),
+                Err(error) => {
+                    log!("Warning: ignoring invalid generated option {option_arg:?}: {error}")
+                }
             }
         }
         if options.headless {
@@ -434,7 +436,9 @@ pub fn main<T: Iterator<Item = String>>(mut args: T) -> Result<(), String> {
         match options.parse_argument(&option_arg) {
             Ok(true) => (),
             Ok(false) => log!("Warning: ignoring unknown generated option {option_arg:?}"),
-            Err(error) => log!("Warning: ignoring invalid generated option {option_arg:?}: {error}"),
+            Err(error) => {
+                log!("Warning: ignoring invalid generated option {option_arg:?}: {error}")
+            }
         }
     }
     if options.fps_limit.is_none() {
@@ -448,12 +452,23 @@ pub fn main<T: Iterator<Item = String>>(mut args: T) -> Result<(), String> {
     }
     crate::log::set_file_logging(options.log_file);
     if options.pulse_audio {
-        unsafe { std::env::set_var("TOUCHHLE_PULSE_AUDIO", "1"); }
+        unsafe {
+            std::env::set_var("TOUCHHLE_PULSE_AUDIO", "1");
+        }
         log!("Pulse audio option enabled for this launch");
     } else {
-        unsafe { std::env::remove_var("TOUCHHLE_PULSE_AUDIO"); }
+        unsafe {
+            std::env::remove_var("TOUCHHLE_PULSE_AUDIO");
+        }
     }
-    crate::gles::configure_translator_tracing(options.trace_gl_errors);
+    crate::gles::configure_translator_tracing(options.trace_gl_errors, options.verbose_logging);
+    crate::log::set_verbose_logging(options.verbose_logging);
+    unsafe {
+        std::env::set_var(
+            "TOUCHHLE_AUDIO_BACKEND",
+            options.audio_backend.driver_name(),
+        );
+    }
 
     let architecture = {
         let executable_bytes = fs

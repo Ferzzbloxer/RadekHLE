@@ -63,7 +63,6 @@
 //!   - [EXT_texture_filter_anisotropic](https://registry.khronos.org/OpenGL/extensions/EXT/EXT_texture_filter_anisotropic.txt)
 //!   - [EXT_texture_lod_bias](https://registry.khronos.org/OpenGL/extensions/EXT/EXT_texture_lod_bias.txt)
 
-pub mod wgpu;
 pub mod gles1_native;
 pub mod gles1_on_gl2;
 pub mod gles1_on_gles2;
@@ -79,6 +78,7 @@ mod gles_generic;
 pub mod present;
 pub mod software;
 pub mod util;
+pub mod wgpu;
 use touchHLE_gl_bindings::gl21compat as gl21compat_raw;
 use touchHLE_gl_bindings::gl33core as gl33core_raw;
 pub use touchHLE_gl_bindings::gles11 as gles11_raw;
@@ -104,15 +104,26 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 static TRANSLATOR_TRACE_EVENTS: AtomicU32 = AtomicU32::new(0);
 static TRANSLATOR_TRACING_ENABLED: AtomicBool = AtomicBool::new(false);
+static VERBOSE_LOGGING_ENABLED: AtomicBool = AtomicBool::new(false);
 static GL_CALL_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static ANISOTROPIC_FILTERING: AtomicU8 = AtomicU8::new(1);
 static TEXTURE_UPSCALER: AtomicU8 = AtomicU8::new(1);
 static ANTI_ALIASING: AtomicU8 = AtomicU8::new(1);
+static TEXTURE_FILTERING: AtomicU8 = AtomicU8::new(0);
+static MEMORY_MANAGEMENT: AtomicU8 = AtomicU8::new(1);
 
-pub(crate) fn configure_quality_options(anisotropic_filtering: u8, texture_upscaler: u8, anti_aliasing: u8) {
+pub(crate) fn configure_quality_options(
+    anisotropic_filtering: u8,
+    texture_upscaler: u8,
+    anti_aliasing: u8,
+    texture_filtering: u8,
+    memory_management: u8,
+) {
     ANISOTROPIC_FILTERING.store(anisotropic_filtering.clamp(1, 16), Ordering::Relaxed);
     TEXTURE_UPSCALER.store(texture_upscaler.clamp(1, 4), Ordering::Relaxed);
     ANTI_ALIASING.store(anti_aliasing.clamp(1, 8), Ordering::Relaxed);
+    TEXTURE_FILTERING.store(texture_filtering.min(3), Ordering::Relaxed);
+    MEMORY_MANAGEMENT.store(memory_management.min(2), Ordering::Relaxed);
 }
 
 pub(crate) fn quality_options() -> (u8, u8, u8) {
@@ -123,15 +134,31 @@ pub(crate) fn quality_options() -> (u8, u8, u8) {
     )
 }
 
+pub(crate) fn texture_filtering() -> u8 {
+    TEXTURE_FILTERING.load(Ordering::Relaxed)
+}
+
+pub(crate) fn memory_management() -> u8 {
+    MEMORY_MANAGEMENT.load(Ordering::Relaxed)
+}
+
 pub(crate) fn next_gl_call_id() -> u64 {
     GL_CALL_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1
 }
 
-pub(crate) fn configure_translator_tracing(enabled: bool) {
+pub(crate) fn configure_translator_tracing(enabled: bool, verbose: bool) {
     TRANSLATOR_TRACING_ENABLED.store(enabled, Ordering::Relaxed);
+    VERBOSE_LOGGING_ENABLED.store(verbose, Ordering::Relaxed);
     if enabled {
         log!("GLES translator tracing enabled; GLES1 matrix operations will be logged");
     }
+    if verbose {
+        log!("Verbose GLES logging enabled; every guest GLES dispatch will include call-site and state diagnostics");
+    }
+}
+
+pub(crate) fn verbose_logging_enabled() -> bool {
+    VERBOSE_LOGGING_ENABLED.load(Ordering::Relaxed)
 }
 
 pub(crate) fn translator_tracing_enabled() -> bool {
@@ -174,16 +201,21 @@ pub fn configure_custom_driver(path: Option<&std::path::Path>) -> bool {
             log!("Custom driver archive selected: {}", archive.display());
             archive
         } else {
-            log!("Custom driver directory contains no ZIP archive: {}", requested.display());
+            log!(
+                "Custom driver directory contains no ZIP archive: {}",
+                requested.display()
+            );
             return false;
         }
     } else {
         requested
     };
     log!("Custom driver requested: {}", requested.display());
-    let driver_dir = if requested.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("zip")) {
+    let driver_dir = if requested
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("zip"))
+    {
         match extract_custom_driver_archive(&requested) {
-
             Ok(directory) => directory,
             Err(error) => {
                 log!("Custom driver archive could not be prepared: {}", error);
@@ -193,21 +225,39 @@ pub fn configure_custom_driver(path: Option<&std::path::Path>) -> bool {
     } else if requested.is_dir() {
         requested.clone()
     } else if requested.is_file() {
-        requested.parent().unwrap_or_else(|| std::path::Path::new(".")).to_path_buf()
+        requested
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .to_path_buf()
     } else {
         log!("Custom driver path does not exist: {}", requested.display());
         return false;
     };
     let (egl, gles) = if requested.is_file() && requested.extension().is_none() {
         (requested.clone(), requested.clone())
-    } else if requested.is_file() && requested.extension().is_some_and(|extension| {
-        ["so", "dylib", "dll"].iter().any(|name| extension.eq_ignore_ascii_case(name))
-    }) {
+    } else if requested.is_file()
+        && requested.extension().is_some_and(|extension| {
+            ["so", "dylib", "dll"]
+                .iter()
+                .any(|name| extension.eq_ignore_ascii_case(name))
+        })
+    {
         log!("Custom driver file {} selected; SDL will use it as the GLES library and retain the directory for EGL lookup", requested.display());
         (requested.clone(), requested.clone())
     } else {
-        let egl = find_driver_library(&driver_dir, &["libEGL.so", "libEGL.so.1", "libEGL.dylib", "libEGL.dll"]);
-        let gles = find_driver_library(&driver_dir, &["libGLESv2.so", "libGLESv2.so.2", "libGLESv2.dylib", "libGLESv2.dll"]);
+        let egl = find_driver_library(
+            &driver_dir,
+            &["libEGL.so", "libEGL.so.1", "libEGL.dylib", "libEGL.dll"],
+        );
+        let gles = find_driver_library(
+            &driver_dir,
+            &[
+                "libGLESv2.so",
+                "libGLESv2.so.2",
+                "libGLESv2.dylib",
+                "libGLESv2.dll",
+            ],
+        );
         let (Some(egl), Some(gles)) = (egl, gles) else {
             log!("Custom driver requested at {} but both EGL and GLESv2 libraries were not found under {}", requested.display(), driver_dir.display());
             return false;
@@ -219,7 +269,12 @@ pub fn configure_custom_driver(path: Option<&std::path::Path>) -> bool {
         std::env::set_var("SDL_VIDEO_GL_DRIVER", &gles);
     }
     sdl2::hint::set("SDL_OPENGL_ES_DRIVER", "1");
-    log!("Custom driver active: EGL={}, GLES={}, source={}", egl.display(), gles.display(), requested.display());
+    log!(
+        "Custom driver active: EGL={}, GLES={}, source={}",
+        egl.display(),
+        gles.display(),
+        requested.display()
+    );
     true
 }
 
@@ -243,7 +298,16 @@ fn find_driver_library(directory: &std::path::Path, names: &[&str]) -> Option<st
     let entries = std::fs::read_dir(directory).ok()?;
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_file() && path.file_name().and_then(|name| name.to_str()).is_some_and(|name| names.iter().any(|candidate| name.eq_ignore_ascii_case(candidate))) {
+        if path.is_file()
+            && path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    names
+                        .iter()
+                        .any(|candidate| name.eq_ignore_ascii_case(candidate))
+                })
+        {
             return Some(path);
         }
     }
@@ -255,27 +319,51 @@ fn extract_custom_driver_archive(path: &std::path::Path) -> Result<std::path::Pa
     if !path.is_file() {
         return Err(format!("archive does not exist: {}", path.display()));
     }
-    let archive_file = std::fs::File::open(path).map_err(|error| format!("could not open {}: {}", path.display(), error))?;
-    let mut archive = zip::ZipArchive::new(archive_file).map_err(|error| format!("invalid ZIP archive: {}", error))?;
-    let stem = path.file_stem().and_then(|name| name.to_str()).unwrap_or("custom-driver");
-    let safe_stem: String = stem.chars().map(|character| if character.is_ascii_alphanumeric() || character == '-' || character == '_' { character } else { '_' }).collect();
-    let output = crate::paths::user_data_base_path().join("touchHLE_custom_drivers").join(safe_stem);
-    std::fs::create_dir_all(&output).map_err(|error| format!("could not create {}: {}", output.display(), error))?;
+    let archive_file = std::fs::File::open(path)
+        .map_err(|error| format!("could not open {}: {}", path.display(), error))?;
+    let mut archive = zip::ZipArchive::new(archive_file)
+        .map_err(|error| format!("invalid ZIP archive: {}", error))?;
+    let stem = path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("custom-driver");
+    let safe_stem: String = stem
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '-' || character == '_' {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let output = crate::paths::user_data_base_path()
+        .join("touchHLE_custom_drivers")
+        .join(safe_stem);
+    std::fs::create_dir_all(&output)
+        .map_err(|error| format!("could not create {}: {}", output.display(), error))?;
     for index in 0..archive.len() {
-        let mut entry = archive.by_index(index).map_err(|error| format!("could not read ZIP entry {}: {}", index, error))?;
+        let mut entry = archive
+            .by_index(index)
+            .map_err(|error| format!("could not read ZIP entry {}: {}", index, error))?;
         let Some(enclosed) = entry.enclosed_name().map(|name| output.join(name)) else {
             return Err(format!("unsafe ZIP entry at index {}", index));
         };
         if entry.is_dir() {
-            std::fs::create_dir_all(&enclosed).map_err(|error| format!("could not create {}: {}", enclosed.display(), error))?;
+            std::fs::create_dir_all(&enclosed)
+                .map_err(|error| format!("could not create {}: {}", enclosed.display(), error))?;
             continue;
         }
         if let Some(parent) = enclosed.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| format!("could not create {}: {}", parent.display(), error))?;
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("could not create {}: {}", parent.display(), error))?;
         }
         let mut bytes = Vec::new();
-        entry.read_to_end(&mut bytes).map_err(|error| format!("could not extract {}: {}", entry.name(), error))?;
-        std::fs::write(&enclosed, bytes).map_err(|error| format!("could not write {}: {}", enclosed.display(), error))?;
+        entry
+            .read_to_end(&mut bytes)
+            .map_err(|error| format!("could not extract {}: {}", entry.name(), error))?;
+        std::fs::write(&enclosed, bytes)
+            .map_err(|error| format!("could not write {}: {}", enclosed.display(), error))?;
     }
     log!("Custom driver archive extracted to {}", output.display());
     Ok(output)
@@ -443,10 +531,7 @@ pub fn create_gles1_ctx(env: &mut Environment) -> Box<dyn GLESContext> {
 pub fn create_software_gles_ctx(env: &mut Environment) -> Box<dyn GLESContext> {
     env.on_parent_stack_in_coroutine(|window, _options| {
         log!("Using CPU software OpenGL ES 2.0 / 3.0 compatibility rasterizer");
-        Box::new(
-            SoftwareGLESContext::new(window)
-                .expect("Could not create software GLES context"),
-        )
+        Box::new(SoftwareGLESContext::new(window).expect("Could not create software GLES context"))
     })
 }
 

@@ -397,18 +397,29 @@ pub unsafe fn decode_texture_to_rgba8(
 }
 
 /// Nearest-neighbour upscale for decoded RGBA8 byte pixels.
-pub fn upscale_rgba8(pixels: &[u8], width: u32, height: u32, scale: u8) -> Option<(Vec<u8>, u32, u32)> {
+pub fn upscale_rgba8(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    scale: u8,
+) -> Option<(Vec<u8>, u32, u32)> {
     if scale <= 1 || width == 0 || height == 0 {
         return None;
     }
     let scale = u32::from(scale);
     let output_width = width.checked_mul(scale)?;
     let output_height = height.checked_mul(scale)?;
-    let source_len = usize::try_from(width).ok()?.checked_mul(usize::try_from(height).ok()?)?.checked_mul(4)?;
+    let source_len = usize::try_from(width)
+        .ok()?
+        .checked_mul(usize::try_from(height).ok()?)?
+        .checked_mul(4)?;
     if pixels.len() < source_len {
         return None;
     }
-    let output_len = usize::try_from(output_width).ok()?.checked_mul(usize::try_from(output_height).ok()?)?.checked_mul(4)?;
+    let output_len = usize::try_from(output_width)
+        .ok()?
+        .checked_mul(usize::try_from(output_height).ok()?)?
+        .checked_mul(4)?;
     let mut output = vec![0; output_len];
     let source_width = usize::try_from(width).ok()?;
     let output_width_usize = usize::try_from(output_width).ok()?;
@@ -426,18 +437,27 @@ pub fn upscale_rgba8(pixels: &[u8], width: u32, height: u32, scale: u8) -> Optio
 }
 
 /// Nearest-neighbour upscale for decoded RGBA8 words.
-pub fn upscale_rgba8_words(pixels: &[u32], width: u32, height: u32, scale: u8) -> Option<(Vec<u32>, u32, u32)> {
+pub fn upscale_rgba8_words(
+    pixels: &[u32],
+    width: u32,
+    height: u32,
+    scale: u8,
+) -> Option<(Vec<u32>, u32, u32)> {
     if scale <= 1 || width == 0 || height == 0 {
         return None;
     }
     let scale = u32::from(scale);
     let output_width = width.checked_mul(scale)?;
     let output_height = height.checked_mul(scale)?;
-    let source_len = usize::try_from(width).ok()?.checked_mul(usize::try_from(height).ok()?)?;
+    let source_len = usize::try_from(width)
+        .ok()?
+        .checked_mul(usize::try_from(height).ok()?)?;
     if pixels.len() < source_len {
         return None;
     }
-    let output_len = usize::try_from(output_width).ok()?.checked_mul(usize::try_from(output_height).ok()?)?;
+    let output_len = usize::try_from(output_width)
+        .ok()?
+        .checked_mul(usize::try_from(output_height).ok()?)?;
     let mut output = vec![0; output_len];
     let source_width = usize::try_from(width).ok()?;
     let output_width_usize = usize::try_from(output_width).ok()?;

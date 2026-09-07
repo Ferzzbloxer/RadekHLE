@@ -26,6 +26,7 @@ use crate::Environment;
 use sdl2::mouse::MouseButton;
 use sdl2::pixels::{Color, PixelFormatEnum};
 use sdl2::surface::Surface;
+use sdl2::video::SwapInterval;
 use sdl2_sys::SDL_PowerState;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
@@ -46,11 +47,22 @@ pub(crate) fn calculate_letterboxed_viewport(
     let game_aspect = game_width as f64 / game_height as f64;
     let drawable_aspect = drawable_width as f64 / drawable_height as f64;
     let (width, height) = if game_aspect < drawable_aspect {
-        ((drawable_height as f64 * game_aspect).round() as u32, drawable_height)
+        (
+            (drawable_height as f64 * game_aspect).round() as u32,
+            drawable_height,
+        )
     } else {
-        (drawable_width, (drawable_width as f64 / game_aspect).round() as u32)
+        (
+            drawable_width,
+            (drawable_width as f64 / game_aspect).round() as u32,
+        )
     };
-    ((drawable_width - width) / 2, (drawable_height - height) / 2, width, height)
+    (
+        (drawable_width - width) / 2,
+        (drawable_height - height) / 2,
+        width,
+        height,
+    )
 }
 
 #[derive(Default)]
@@ -1036,7 +1048,10 @@ fn transform_software_pixels(
             let (destination_x, destination_y) = match quarter_turns {
                 0 => (source_x, source_y),
                 1 => (height as usize - 1 - source_y, source_x),
-                2 => (width as usize - 1 - source_x, height as usize - 1 - source_y),
+                2 => (
+                    width as usize - 1 - source_x,
+                    height as usize - 1 - source_y,
+                ),
                 _ => (source_y, width as usize - 1 - source_x),
             };
             let source = (y * width as usize + x) * 4;
@@ -1224,10 +1239,15 @@ impl Window {
             options.anisotropic_filtering,
             options.texture_upscaler,
             options.anti_aliasing,
+            options.texture_filtering as u8,
+            options.memory_management as u8,
         );
-        let custom_driver_active = crate::gles::configure_custom_driver(options.custom_driver.as_deref());
+        let custom_driver_active =
+            crate::gles::configure_custom_driver(options.custom_driver.as_deref());
         crate::gles::configure_angle_driver(options.angle_driver && !custom_driver_active);
-        let llvmpipe_active = crate::gles::configure_llvmpipe_fallback(options.llvmpipe_fallback && !custom_driver_active);
+        let llvmpipe_active = crate::gles::configure_llvmpipe_fallback(
+            options.llvmpipe_fallback && !custom_driver_active,
+        );
         let software_presentation = options.software_rendering || options.software_presentation;
         let frame_generation = options.frame_generation && !software_presentation;
         let rtcs = options.rtcs;
@@ -1339,11 +1359,7 @@ impl Window {
             );
             let mut builder = video_ctx.window(title, width, height);
             builder.opengl();
-            let window = builder
-                .position_centered()
-                .resizable()
-                .build()
-                .unwrap();
+            let window = builder.position_centered().resizable().build().unwrap();
             window
         };
 
@@ -1450,7 +1466,11 @@ impl Window {
             return window;
         }
 
-        if matches!(options.graphics_api, crate::options::GraphicsApi::Wgpu | crate::options::GraphicsApi::Vulkan) || frame_generation {
+        if matches!(
+            options.graphics_api,
+            crate::options::GraphicsApi::Wgpu | crate::options::GraphicsApi::Vulkan
+        ) || frame_generation
+        {
             let presentation = if options.graphics_api == crate::options::GraphicsApi::Vulkan {
                 WgpuPresentation::new_vulkan(&window.window)
             } else {
@@ -1459,7 +1479,10 @@ impl Window {
             log!("{} selected as the host presentation backend; guest EAGL remains on the existing GLES2 compatibility path", options.graphics_api.label());
             match presentation {
                 Ok(presentation) => {
-                    log!("{} presentation initialized successfully", options.graphics_api.label());
+                    log!(
+                        "{} presentation initialized successfully",
+                        options.graphics_api.label()
+                    );
                     window.wgpu_presentation = Some(presentation);
                 }
                 Err(error) => {
@@ -1485,9 +1508,9 @@ impl Window {
                 SoftwareGLESContext::new(&mut window)
                     .expect("Could not create software GLES context"),
             ),
-            crate::options::GraphicsApi::Metal | crate::options::GraphicsApi::Wgpu | crate::options::GraphicsApi::Vulkan => {
-                create_gles2_ctx_no_parent_stack(&mut window)
-            }
+            crate::options::GraphicsApi::Metal
+            | crate::options::GraphicsApi::Wgpu
+            | crate::options::GraphicsApi::Vulkan => create_gles2_ctx_no_parent_stack(&mut window),
             crate::options::GraphicsApi::Default => {
                 if llvmpipe_active {
                     create_gles1_translator_ctx_no_parent_stack(&mut window)
@@ -1501,6 +1524,18 @@ impl Window {
         {
             let gl_ctx = gl_ins.make_current(&mut window);
             log!("Driver info: {}", unsafe { gl_ctx.driver_description() });
+        }
+        if options.vsync {
+            if let Err(error) = window.video_ctx.gl_set_swap_interval(SwapInterval::VSync) {
+                log!("Vsync requested but SDL could not enable the host swap interval: {error}");
+            } else {
+                log!("Vsync enabled: host presentation is synchronized to the display");
+            }
+        } else if let Err(error) = window
+            .video_ctx
+            .gl_set_swap_interval(SwapInterval::Immediate)
+        {
+            log_dbg!("Immediate swap interval unavailable: {error}");
         }
         window.internal_gl_ins = Some(gl_ins);
 
@@ -2451,18 +2486,26 @@ impl Window {
         }
         self.rtcs_frame = self.rtcs_frame.wrapping_add(1);
         let progress = (self.rtcs_frame as f32 / 1800.0).clamp(0.0, 1.0);
-        let block = (1 + (progress * 18.0) as usize).min(width as usize / 2).max(1);
+        let block = (1 + (progress * 18.0) as usize)
+            .min(width as usize / 2)
+            .max(1);
         let stride = width as usize * 4;
         let step = 37 + (self.rtcs_frame as usize % 97);
         let mut index = (self.rtcs_frame as usize * 7919) % (width as usize * height as usize);
-        let affected = ((width as usize * height as usize) as f32 * (0.002 + progress * 0.09)) as usize;
+        let affected =
+            ((width as usize * height as usize) as f32 * (0.002 + progress * 0.09)) as usize;
         for _ in 0..affected.max(1) {
             let x = (index % width as usize) / block * block;
             let y = (index / width as usize) / block * block;
             let x_end = (x + block).min(width as usize);
             let y_end = (y + block).min(height as usize);
             let source = (y * stride + x * 4).min(pixels.len().saturating_sub(4));
-            let rgba = [pixels[source], pixels[source + 1], pixels[source + 2], pixels[source + 3]];
+            let rgba = [
+                pixels[source],
+                pixels[source + 1],
+                pixels[source + 2],
+                pixels[source + 3],
+            ];
             for row in y..y_end {
                 for col in x..x_end {
                     let dst = row * stride + col * 4;
@@ -2504,7 +2547,11 @@ impl Window {
         }
         let mut current = vec![0u8; expected_len];
         for y in 0..height as usize {
-            let source_y = if bottom_up { height as usize - 1 - y } else { y };
+            let source_y = if bottom_up {
+                height as usize - 1 - y
+            } else {
+                y
+            };
             let source = source_y * width as usize * 4;
             let destination = y * width as usize * 4;
             current[destination..destination + width as usize * 4]
@@ -2543,9 +2590,9 @@ impl Window {
                 let inverse = 256 - blend;
                 let mut interpolated = vec![0u8; expected_len];
                 for index in 0..expected_len {
-                    interpolated[index] =
-                        ((previous[index] as u32 * inverse + current[index] as u32 * blend) >> 8)
-                            as u8;
+                    interpolated[index] = ((previous[index] as u32 * inverse
+                        + current[index] as u32 * blend)
+                        >> 8) as u8;
                 }
                 self.present_software_pixels(interpolated, width, height, false);
                 generated += 1;
@@ -2574,7 +2621,11 @@ impl Window {
         let row_bytes = width as usize * 4;
         let mut top_down = vec![0u8; width as usize * height as usize * 4];
         for y in 0..height as usize {
-            let source_y = if bottom_up { height as usize - 1 - y } else { y };
+            let source_y = if bottom_up {
+                height as usize - 1 - y
+            } else {
+                y
+            };
             let source = source_y * row_bytes;
             let destination = y * row_bytes;
             top_down[destination..destination + row_bytes]
@@ -2625,7 +2676,9 @@ impl Window {
                     self.frame_generation = false;
                     self.frame_generation_state.previous = None;
                     self.frame_generation_state.last_frame_at = None;
-                    if let Err(fallback_error) = wgpu.present_pixels(&pixels, width, height, bottom_up) {
+                    if let Err(fallback_error) =
+                        wgpu.present_pixels(&pixels, width, height, bottom_up)
+                    {
                         log!("WGPU fallback presentation failed: {fallback_error}");
                     }
                 }
@@ -2844,9 +2897,9 @@ impl Window {
                 // Also show FPS in the window title so it's visible when the
                 // app is running fullscreen or without console.
                 let base_title = if crate::branding().is_empty() {
-                    format!("touchHLE {}", crate::VERSION)
+                    format!("RadekHLE 6.0 {}", crate::VERSION)
                 } else {
-                    format!("touchHLE {} {}", crate::branding(), crate::VERSION)
+                    format!("RadekHLE 6.0 {} {}", crate::branding(), crate::VERSION)
                 };
                 let title = format!("{} - FPS: {:.1}", base_title, fps);
                 // Ignore any error setting the title.
@@ -3009,6 +3062,10 @@ impl Window {
         self.frame_generation
     }
 
+    pub fn display_refresh_rate(&self) -> f64 {
+        self.display_refresh_rate
+    }
+
     /// Get the region of the on-screen window (x, y, width, height) used to
     /// display the app content.
     ///
@@ -3161,7 +3218,7 @@ pub fn show_error_messagebox(window: Option<&Window>, error_message: &str) {
         messagebox::MessageBoxFlag::ERROR,
         &mbox,
         "touchHLE crashed!",
-        &format!("touchHLE crashed with the following error: {error_message}"),
+        &format!("RadekHLE 6.0 crashed with the following error: {error_message}"),
         window.map(|win| &win.window),
         None,
     ) else {
@@ -3303,23 +3360,23 @@ mod presentation_tests {
 
     #[test]
     fn output_rotation_preserves_pixels_and_swaps_dimensions() {
-        let pixels = vec![
-            1, 0, 0, 255, 2, 0, 0, 255,
-            3, 0, 0, 255, 4, 0, 0, 255,
-        ];
+        let pixels = vec![1, 0, 0, 255, 2, 0, 0, 255, 3, 0, 0, 255, 4, 0, 0, 255];
         let (rotated, width, height) = transform_software_pixels(pixels, 2, 2, 1, false, false);
         assert_eq!((width, height), (2, 2));
-        assert_eq!(rotated, vec![3, 0, 0, 255, 1, 0, 0, 255, 4, 0, 0, 255, 2, 0, 0, 255]);
+        assert_eq!(
+            rotated,
+            vec![3, 0, 0, 255, 1, 0, 0, 255, 4, 0, 0, 255, 2, 0, 0, 255]
+        );
     }
 
     #[test]
     fn output_axis_reverts_are_applied_before_rotation() {
-        let pixels = vec![
-            1, 0, 0, 255, 2, 0, 0, 255,
-            3, 0, 0, 255, 4, 0, 0, 255,
-        ];
+        let pixels = vec![1, 0, 0, 255, 2, 0, 0, 255, 3, 0, 0, 255, 4, 0, 0, 255];
         let (flipped, width, height) = transform_software_pixels(pixels, 2, 2, 0, true, false);
         assert_eq!((width, height), (2, 2));
-        assert_eq!(flipped, vec![2, 0, 0, 255, 1, 0, 0, 255, 4, 0, 0, 255, 3, 0, 0, 255]);
+        assert_eq!(
+            flipped,
+            vec![2, 0, 0, 255, 1, 0, 0, 255, 4, 0, 0, 255, 3, 0, 0, 255]
+        );
     }
 }

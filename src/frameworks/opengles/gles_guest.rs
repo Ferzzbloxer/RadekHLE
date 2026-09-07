@@ -261,6 +261,15 @@ where
     };
     let call_id = crate::gles::next_gl_call_id();
     let res = f(gles.as_mut(), &mut env.mem);
+    if crate::gles::verbose_logging_enabled() {
+        log!(
+            "[GLES VERBOSE] call #{} from {}:{}",
+            call_id,
+            caller.file(),
+            caller.line()
+        );
+        log_gpu_state(gles.as_mut(), "after-call");
+    }
     if crate::gles::translator_tracing_enabled() && gles.is_translator() {
         crate::gles::trace_translator_event(format!(
             "guest call at {}:{}",
@@ -315,6 +324,15 @@ where
     let call_id = crate::gles::next_gl_call_id();
     let res = f(gles.as_mut(), &mut env.mem);
     let err = unsafe { gles.GetError() };
+    if crate::gles::verbose_logging_enabled() {
+        log!(
+            "[GLES VERBOSE] no-skip call #{} from {}:{}",
+            call_id,
+            caller.file(),
+            caller.line()
+        );
+        log_gpu_state(gles.as_mut(), "after-call");
+    }
     trace_gl_error(
         trace,
         call_id,
@@ -2182,17 +2200,16 @@ fn glTexImage2D(
         if let Some(decoded) = crate::gles::util::decode_texture_to_rgba8(
             width, height, format, type_, pixels, alignment,
         ) {
-            let (upload_pixels, upload_width, upload_height) =
-                crate::gles::util::upscale_rgba8(
-                    &decoded,
-                    width.max(0) as u32,
-                    height.max(0) as u32,
-                    texture_upscaler,
-                )
-                .map_or(
-                    (decoded, width.max(0) as u32, height.max(0) as u32),
-                    |(pixels, width, height)| (pixels, width, height),
-                );
+            let (upload_pixels, upload_width, upload_height) = crate::gles::util::upscale_rgba8(
+                &decoded,
+                width.max(0) as u32,
+                height.max(0) as u32,
+                texture_upscaler,
+            )
+            .map_or(
+                (decoded, width.max(0) as u32, height.max(0) as u32),
+                |(pixels, width, height)| (pixels, width, height),
+            );
             gles.PixelStorei(gles11::UNPACK_ALIGNMENT, 1);
             gles.TexImage2D(
                 target,
@@ -2209,17 +2226,11 @@ fn glTexImage2D(
         } else {
             let legacy_internalformat = matches!(
                 internalformat as GLenum,
-                gles11::ALPHA
-                    | gles11::LUMINANCE
-                    | gles11::LUMINANCE_ALPHA
-                    | gles11::BGRA_EXT
+                gles11::ALPHA | gles11::LUMINANCE | gles11::LUMINANCE_ALPHA | gles11::BGRA_EXT
             );
             let legacy_format = matches!(
                 format,
-                gles11::ALPHA
-                    | gles11::LUMINANCE
-                    | gles11::LUMINANCE_ALPHA
-                    | gles11::BGRA_EXT
+                gles11::ALPHA | gles11::LUMINANCE | gles11::LUMINANCE_ALPHA | gles11::BGRA_EXT
             );
             let host_internalformat = if legacy_internalformat {
                 gles11::RGBA as GLint
@@ -2350,7 +2361,10 @@ fn glCompressedTexImage2D(
                 return;
             }
             if let Some(decoded) = crate::gles::util::PalettedTextureFormat::decode_rgba8(
-                internalformat, width, height, payload,
+                internalformat,
+                width,
+                height,
+                payload,
             ) {
                 let (upload_pixels, upload_width, upload_height) =
                     crate::gles::util::upscale_rgba8(
@@ -3216,7 +3230,11 @@ fn glIsProgram(env: &mut Environment, program: GLuint) -> GLboolean {
     with_ctx_and_mem(env, |gles, _mem| unsafe { gles.IsProgram(program) })
 }
 fn glGetShaderiv(env: &mut Environment, shader: GLuint, pname: GLenum, params: MutPtr<GLint>) {
-    log!("[GLES] glGetShaderiv called with shader={}, pname=0x{:x}", shader, pname);
+    log!(
+        "[GLES] glGetShaderiv called with shader={}, pname=0x{:x}",
+        shader,
+        pname
+    );
     with_ctx_and_mem(env, |gles, mem| unsafe {
         let mut val: GLint = 0;
         gles.GetShaderiv(shader, pname, &mut val);
@@ -3291,7 +3309,11 @@ fn glGetShaderInfoLog(
     });
 }
 fn glGetProgramiv(env: &mut Environment, program: GLuint, pname: GLenum, params: MutPtr<GLint>) {
-    log!("[GLES] glGetProgramiv called with program={}, pname=0x{:x}", program, pname);
+    log!(
+        "[GLES] glGetProgramiv called with program={}, pname=0x{:x}",
+        program,
+        pname
+    );
     with_ctx_and_mem(env, |gles, mem| unsafe {
         let mut val: GLint = 0;
         gles.GetProgramiv(program, pname, &mut val);
