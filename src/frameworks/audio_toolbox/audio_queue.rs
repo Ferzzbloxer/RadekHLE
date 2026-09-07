@@ -511,6 +511,9 @@ pub fn AudioQueueEnqueueBuffer(
     if !host_object.buffers.contains(&in_buffer) {
         return kAudioQueueErr_InvalidBuffer;
     }
+    if host_object.buffer_queue.contains(&in_buffer) {
+        return kAudioQueueErr_BufferInQueue;
+    }
 
     host_object.buffer_queue.push_back(in_buffer);
 
@@ -1256,6 +1259,36 @@ fn frames_for_audio_bytes(format: &AudioStreamBasicDescription, bytes: usize) ->
     }
 }
 
+fn apply_lower_audio_quality(
+    al_format: ALenum,
+    frequency: ALsizei,
+    data: Vec<u8>,
+) -> (ALsizei, Vec<u8>) {
+    let (channels, bytes_per_sample) = match al_format {
+        al::AL_FORMAT_MONO8 => (1usize, 1usize),
+        al::AL_FORMAT_STEREO8 => (2usize, 1usize),
+        al::AL_FORMAT_MONO16 => (1usize, 2usize),
+        al::AL_FORMAT_STEREO16 => (2usize, 2usize),
+        _ => return (frequency, data),
+    };
+    if frequency <= 22_050 {
+        return (frequency, data);
+    }
+    let frame_size = channels * bytes_per_sample;
+    let frame_count = data.len() / frame_size;
+    if frame_count < 2 {
+        return (frequency, data);
+    }
+    let mut reduced = Vec::with_capacity((frame_count.div_ceil(2)) * frame_size);
+    for frame in data[..frame_count * frame_size]
+        .chunks_exact(frame_size)
+        .step_by(2)
+    {
+        reduced.extend_from_slice(frame);
+    }
+    ((frequency / 2).max(8_000), reduced)
+}
+
 fn record_audio_queue_underrun(
     host_object: &mut AudioQueueHostObject,
     in_aq: AudioQueueRef,
@@ -1425,12 +1458,15 @@ fn prime_audio_queue(env: &mut Environment, in_aq: AudioQueueRef) {
             break;
         }
 
-        let (al_format, al_frequency, mut data) = decode_buffer(
+        let (al_format, mut al_frequency, mut data) = decode_buffer(
             &env.mem,
             &host_object.format,
             next_buffer.audio_data.cast(),
             next_buffer.audio_data_byte_size,
         );
+        if env.options.low_audio_quality {
+            (al_frequency, data) = apply_lower_audio_quality(al_format, al_frequency, data);
+        }
 
         if data.is_empty() {
             record_audio_queue_underrun(host_object, in_aq, std::time::Instant::now());
@@ -1758,7 +1794,7 @@ fn startup_buffer_size(format: &AudioStreamBasicDescription) -> u32 {
 }
 
 fn ensure_output_buffers(env: &mut Environment, in_aq: AudioQueueRef) {
-    let Some((format, callback_proc, callback_user_data, should_allocate)) =
+    let Some((format, callback_proc, callback_user_data, should_allocate, mut buffers)) =
         State::get(&mut env.framework_state)
             .audio_queues
             .get(&in_aq)
@@ -1768,57 +1804,80 @@ fn ensure_output_buffers(env: &mut Environment, in_aq: AudioQueueRef) {
                     queue.callback_proc,
                     queue.callback_user_data,
                     !queue.is_input && queue.buffers.is_empty(),
+                    queue.buffers.clone(),
                 )
             })
     else {
         return;
     };
-    if !should_allocate {
+
+    if should_allocate {
+        const STARTUP_BUFFER_COUNT: usize = 4;
+        let buffer_size = startup_buffer_size(&format);
+        for _ in 0..STARTUP_BUFFER_COUNT {
+            let audio_data = env.mem.alloc(buffer_size);
+            let buffer_ptr = env.mem.alloc_and_write(AudioQueueBuffer {
+                audio_data_bytes_capacity: buffer_size,
+                audio_data,
+                audio_data_byte_size: 0,
+                user_data: Ptr::null(),
+                packet_description_capacity: 0,
+                _packet_descriptions: Ptr::null(),
+                _packet_description_count: 0,
+            });
+            let Some(queue) = State::get(&mut env.framework_state)
+                .audio_queues
+                .get_mut(&in_aq)
+            else {
+                env.mem.free(audio_data);
+                env.mem.free(buffer_ptr.cast());
+                return;
+            };
+            queue.buffers.push(buffer_ptr);
+            buffers.push(buffer_ptr);
+        }
+
+        log!(
+            "AudioQueueStart: allocated {} startup guest buffers of {} bytes for queue {:?}",
+            STARTUP_BUFFER_COUNT,
+            buffer_size,
+            in_aq
+        );
+    }
+
+    let is_input = State::get(&mut env.framework_state)
+        .audio_queues
+        .get(&in_aq)
+        .is_some_and(|queue| queue.is_input);
+    if is_input {
         return;
     }
 
-    const STARTUP_BUFFER_COUNT: usize = 4;
-    let buffer_size = startup_buffer_size(&format);
-    let mut buffers = Vec::with_capacity(STARTUP_BUFFER_COUNT);
-    for _ in 0..STARTUP_BUFFER_COUNT {
-        let audio_data = env.mem.alloc(buffer_size);
-        let buffer_ptr = env.mem.alloc_and_write(AudioQueueBuffer {
-            audio_data_bytes_capacity: buffer_size,
-            audio_data,
-            audio_data_byte_size: 0,
-            user_data: Ptr::null(),
-            packet_description_capacity: 0,
-            _packet_descriptions: Ptr::null(),
-            _packet_description_count: 0,
-        });
-        let Some(queue) = State::get(&mut env.framework_state)
-            .audio_queues
-            .get_mut(&in_aq)
-        else {
-            env.mem.free(audio_data);
-            env.mem.free(buffer_ptr.cast());
-            return;
-        };
-        queue.buffers.push(buffer_ptr);
-        buffers.push(buffer_ptr);
-    }
-
-    log!(
-        "AudioQueueStart: allocated {} startup guest buffers of {} bytes for queue {:?}",
-        buffers.len(),
-        buffer_size,
-        in_aq
-    );
-
+    // A number of older games allocate their output buffers before starting
+    // the queue, then expect AudioQueueStart to make the first output callback.
+    // The previous implementation only did that for buffers allocated by our
+    // fallback path, so a queue could start with two guest buffers but zero
+    // OpenAL buffers. OpenAL then stopped immediately and background music was
+    // silent until the app happened to refill the queue later.
     for buffer_ptr in buffers {
-        if State::get(&mut env.framework_state)
+        let should_callback = State::get(&mut env.framework_state)
             .audio_queues
             .get(&in_aq)
-            .is_none()
-        {
-            return;
+            .is_some_and(|queue| {
+                queue.buffers.contains(&buffer_ptr)
+                    && !queue.buffer_queue.contains(&buffer_ptr)
+                    && env.mem.read(buffer_ptr).audio_data_byte_size == 0
+            });
+        if should_callback {
+            if State::get(&mut env.framework_state)
+                .audio_queues
+                .get(&in_aq)
+                .is_none()
+            {
+                return;
+            }
+            let () = callback_proc.call_from_host(env, (callback_user_data, in_aq, buffer_ptr));
         }
-        let () = callback_proc.call_from_host(env, (callback_user_data, in_aq, buffer_ptr));
 
         let should_enqueue = State::get(&mut env.framework_state)
             .audio_queues
@@ -1838,7 +1897,7 @@ fn ensure_output_buffers(env: &mut Environment, in_aq: AudioQueueRef) {
         }
     }
 
-    log_audio_queue_state(env, "startup buffer allocation");
+    log_audio_queue_state(env, "startup buffer priming");
 }
 
 pub fn log_audio_queue_state(env: &mut Environment, label: &str) {

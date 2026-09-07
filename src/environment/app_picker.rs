@@ -309,6 +309,7 @@ struct AppPickerDelegateHostObject {
     ios_version_toggle: bool,
     ios_version: Option<Option<(i32, i32, i32)>>,
     core_audio: Option<bool>,
+    low_audio_quality: Option<bool>,
     audio_backend_toggle: bool,
     audio_backend: Option<crate::options::AudioBackend>,
     graphics_api_toggle: bool,
@@ -577,6 +578,10 @@ const CLASSES: ClassExports = objc_classes! {
 - (())coreAudio:(id)switch {
     let switch_state: bool = msg![env; switch isOn];
     env.objc.borrow_mut::<AppPickerDelegateHostObject>(this).core_audio = Some(switch_state);
+}
+- (())lowAudioQuality:(id)switch {
+    let switch_state: bool = msg![env; switch isOn];
+    env.objc.borrow_mut::<AppPickerDelegateHostObject>(this).low_audio_quality = Some(switch_state);
 }
 
 - (())arm64Backend:(id)switch {
@@ -1033,6 +1038,7 @@ fn app_picker_inner(
     let mut quick_options_device_model_scroll: isize = 0;
     let mut quick_options_ios_version: Option<(i32, i32, i32)> = None;
     let mut quick_options_core_audio = false;
+    let mut quick_options_low_audio_quality = false;
     let mut quick_options_graphics_api = crate::options::GraphicsApi::Default;
     let mut quick_options_audio_backend = crate::options::AudioBackend::Default;
     let mut quick_options_texture_filtering = crate::options::TextureFiltering::Default;
@@ -1106,9 +1112,9 @@ fn app_picker_inner(
             let item_tag: NSInteger = msg![env; item tag];
             let selected = item_tag == tag as NSInteger;
             let color: id = if selected {
-                msg_class![env; UIColor colorWithRed:0.16 green:0.38 blue:0.23 alpha:1.0]
+                settings_menu_selected_green(env)
             } else {
-                msg_class![env; UIColor colorWithRed:0.62 green:0.63 blue:0.65 alpha:1.0]
+                settings_menu_gray(env)
             };
             () = msg![env; item setBackgroundColor:color];
         }
@@ -1230,6 +1236,8 @@ fn app_picker_inner(
         &quick_options_stuff.scale_hack_buttons,
         quick_options_scale_hack,
     );
+    () = msg![env; (quick_options_stuff.low_audio_quality_switch)
+        setOn:quick_options_low_audio_quality];
     () = msg![env; (quick_options_stuff.frame_generation_switch)
         setOn:quick_options_frame_generation];
     () = msg![env; (quick_options_stuff.vsync_switch) setOn:quick_options_vsync];
@@ -1709,6 +1717,10 @@ fn app_picker_inner(
             quick_options_angle_driver = enabled;
         } else if let Some(enabled) = std::mem::take(&mut host_obj.log_file) {
             quick_options_log_file = enabled;
+            if !enabled {
+                quick_options_verbose_logging = false;
+                () = msg![env; (quick_options_stuff.verbose_logging_switch) setOn:false];
+            }
         } else if let Some(enabled) = std::mem::take(&mut host_obj.trace_gl_errors) {
             quick_options_trace_gl_errors = enabled;
         } else if let Some(enabled) = std::mem::take(&mut host_obj.fast_memory) {
@@ -1758,6 +1770,9 @@ fn app_picker_inner(
             quick_options_metal_translator = enabled;
         } else if let Some(enabled) = std::mem::take(&mut host_obj.core_audio) {
             quick_options_core_audio = enabled;
+        } else if let Some(enabled) = std::mem::take(&mut host_obj.low_audio_quality) {
+            quick_options_low_audio_quality = enabled;
+            () = msg![env; (quick_options_stuff.low_audio_quality_switch) setOn:enabled];
         } else if let Some(enabled) = std::mem::take(&mut host_obj.software_rendering) {
             quick_options_software_rendering = enabled;
         } else if let Some(enabled) = std::mem::take(&mut host_obj.custom_driver) {
@@ -1943,6 +1958,14 @@ fn app_picker_inner(
         quick_options_audio_backend
     };
     option_args.push(format!("--audio-backend={}", audio_backend.driver_name()));
+    option_args.push(
+        if quick_options_low_audio_quality {
+            "--low-audio-quality"
+        } else {
+            "--disable-low-audio-quality"
+        }
+        .to_string(),
+    );
     option_args.push(
         if quick_options_no_texture_compression {
             "--no-texture-compression"
@@ -2785,6 +2808,7 @@ struct QuickOptionsStuff {
     render_rotation_buttons: [id; 5],
     frame_generation_switch: id,
     fps_limit_buttons: [id; 4],
+    low_audio_quality_switch: id,
     no_texture_compression_switch: id,
     vsync_switch: id,
     battery_saver_switch: id,
@@ -3013,6 +3037,8 @@ fn setup_quick_options(
         RowKind::AudioBackendDropdown,
         RowKind::Label("Core audio"),
         RowKind::Switch("coreAudio:", false),
+        RowKind::Label("Lower audio quality"),
+        RowKind::Switch("lowAudioQuality:", false),
         RowKind::Label("Graphics API"),
         RowKind::GraphicsApiDropdown,
         RowKind::Label("Shader compatibility fixes"),
@@ -3057,8 +3083,6 @@ fn setup_quick_options(
         ]),
         RowKind::Label("Texture filtering"),
         RowKind::TextureFilteringDropdown,
-        RowKind::Label("Verbose logging"),
-        RowKind::Switch("verboseLogging:", false),
         RowKind::Label("No texture compression"),
         RowKind::Switch("noTextureCompression:", false),
         RowKind::Label("Battery saver"),
@@ -3119,6 +3143,8 @@ fn setup_quick_options(
         RowKind::Switch("angleDriver:", false),
         RowKind::Label("Enable log file"),
         RowKind::Switch("logFile:", true),
+        RowKind::Label("Verbose logging"),
+        RowKind::Switch("verboseLogging:", false),
         RowKind::Label("Trace GL errors"),
         RowKind::Switch("traceGLErrors:", false),
         RowKind::Label("Fast memory"),
@@ -3163,6 +3189,7 @@ fn setup_quick_options(
     let mut render_rotation_buttons: Option<[id; 5]> = None;
     let mut fps_limit_buttons: Option<[id; 4]> = None;
     let mut frame_generation_switch: id = nil;
+    let mut low_audio_quality_switch: id = nil;
     let mut no_texture_compression_switch: id = nil;
     let mut vsync_switch: id = nil;
     let mut battery_saver_switch: id = nil;
@@ -3202,11 +3229,11 @@ fn setup_quick_options(
                 let frame = CGRect {
                     origin: CGPoint {
                         x: 22.0 * ui_scale,
-                        y: row_center - (28.0 * ui_scale) / 2.0,
+                        y: row_center - (56.0 * ui_scale) / 2.0,
                     },
                     size: CGSize {
-                        width: main_frame.size.width * 0.36,
-                        height: 42.0 * ui_scale,
+                        width: main_frame.size.width * 0.39,
+                        height: 56.0 * ui_scale,
                     },
                 };
 
@@ -3217,13 +3244,13 @@ fn setup_quick_options(
                 () = msg![env; label setTextAlignment:UITextAlignmentLeft];
                 let label_font = picker_font(env, 15.0 * ui_scale);
                 () = msg![env; label setFont:label_font];
-                () = msg![env; label setNumberOfLines:2];
+                () = msg![env; label setNumberOfLines:0];
                 let black: id = msg_class![env; UIColor blackColor];
                 () = msg![env; label setTextColor:black];
                 let clear: id = msg_class![env; UIColor clearColor];
                 () = msg![env; label setBackgroundColor:clear];
                 () = msg![env; label setAdjustsFontSizeToFitWidth:true];
-                () = msg![env; label setMinimumFontSize:9.0];
+                () = msg![env; label setMinimumFontSize:8.0];
                 () = msg![env; main_view addSubview:label];
             }
             RowKind::Buttons(buttons) => {
@@ -3403,6 +3430,9 @@ fn setup_quick_options(
                 () = msg![env; main_view addSubview:switch];
                 if selector_name == "frameGeneration:" {
                     frame_generation_switch = switch;
+                }
+                if selector_name == "lowAudioQuality:" {
+                    low_audio_quality_switch = switch;
                 }
                 if selector_name == "vsync:" {
                     vsync_switch = switch;
@@ -3668,6 +3698,7 @@ fn setup_quick_options(
         render_rotation_buttons: render_rotation_buttons.unwrap_or([nil; 5]),
         frame_generation_switch,
         fps_limit_buttons: fps_limit_buttons.unwrap_or([nil; 4]),
+        low_audio_quality_switch,
         no_texture_compression_switch,
         vsync_switch,
         battery_saver_switch,
@@ -3720,9 +3751,9 @@ fn update_device_model_menu(
         let tag: NSInteger = msg![env; item tag];
         let is_selected = selected.is_some_and(|v| v as NSInteger == tag);
         let color: id = if is_selected {
-            msg_class![env; UIColor colorWithRed:0.16 green:0.38 blue:0.23 alpha:1.0]
+            settings_menu_selected_green(env)
         } else {
-            msg_class![env; UIColor colorWithRed:0.62 green:0.63 blue:0.65 alpha:1.0]
+            settings_menu_gray(env)
         };
         let white: id = msg_class![env; UIColor whiteColor];
         () = msg![env; item setTitleColor:white forState:UIControlStateNormal];
@@ -3764,16 +3795,22 @@ const GRAPHICS_API_ENTRIES: &[(&str, crate::options::GraphicsApi)] = &[
     ("Vulkan presentation", crate::options::GraphicsApi::Vulkan),
 ];
 
+fn settings_menu_gray(env: &mut Environment) -> id {
+    msg_class![env; UIColor grayColor]
+}
+
+fn settings_menu_selected_green(env: &mut Environment) -> id {
+    msg_class![env; UIColor colorWithRed:0.20 green:0.55 blue:0.30 alpha:1.0]
+}
+
 fn update_graphics_api_dropdown(
     env: &mut Environment,
     button: id,
     items: &[id],
     value: crate::options::GraphicsApi,
 ) {
-    let selected_color: id =
-        msg_class![env; UIColor colorWithRed:0.16 green:0.38 blue:0.23 alpha:1.0];
-    let unselected_color: id =
-        msg_class![env; UIColor colorWithRed:0.62 green:0.63 blue:0.65 alpha:1.0];
+    let selected_color: id = settings_menu_selected_green(env);
+    let unselected_color: id = settings_menu_gray(env);
     let white: id = msg_class![env; UIColor whiteColor];
     for (index, &item) in items.iter().enumerate() {
         let color: id = if GRAPHICS_API_ENTRIES[index].1 == value {
@@ -3790,7 +3827,7 @@ fn update_graphics_api_dropdown(
 }
 
 fn set_settings_menu_background(env: &mut Environment, menu: id) {
-    let gray: id = msg_class![env; UIColor colorWithRed:0.62 green:0.63 blue:0.65 alpha:1.0];
+    let gray: id = settings_menu_gray(env);
     () = msg![env; menu setBackgroundColor:gray];
 }
 
@@ -3812,10 +3849,8 @@ fn update_settings_dropdown<T>(
     selected: usize,
 ) {
     let selected = selected.min(entries.len().saturating_sub(1));
-    let selected_color: id =
-        msg_class![env; UIColor colorWithRed:0.16 green:0.38 blue:0.23 alpha:1.0];
-    let unselected_color: id =
-        msg_class![env; UIColor colorWithRed:0.62 green:0.63 blue:0.65 alpha:1.0];
+    let selected_color: id = settings_menu_selected_green(env);
+    let unselected_color: id = settings_menu_gray(env);
     let white: id = msg_class![env; UIColor whiteColor];
     for (index, &item) in items.iter().enumerate() {
         let background = if index == selected {
@@ -3861,7 +3896,7 @@ fn make_graphics_api_dropdown(
     () = msg![env; button_label setAdjustsFontSizeToFitWidth:true];
     () = msg![env; button_label setMinimumFontSize:8.0];
     let white: id = msg_class![env; UIColor whiteColor];
-    let gray: id = msg_class![env; UIColor colorWithRed:0.62 green:0.63 blue:0.65 alpha:1.0];
+    let gray: id = settings_menu_gray(env);
     () = msg![env; button setTitleColor:white forState:UIControlStateNormal];
     () = msg![env; button setBackgroundColor:gray];
     () = msg![env; button setFrame:frame];
@@ -3883,8 +3918,10 @@ fn make_graphics_api_dropdown(
         () = msg![env; item setTitle:text forState:UIControlStateNormal];
         release(env, text);
         let item_label: id = msg![env; item titleLabel];
-        let item_font = picker_font(env, 12.0 * ui_scale);
+        let item_font = picker_font(env, 11.0 * ui_scale);
         () = msg![env; item_label setFont:item_font];
+        () = msg![env; item_label setAdjustsFontSizeToFitWidth:true];
+        () = msg![env; item_label setMinimumFontSize:6.0];
         () = msg![env; item setTitleColor:white forState:UIControlStateNormal];
         () = msg![env; item setBackgroundColor:gray];
         () = msg![env; item setFrame:(CGRect { origin: CGPoint { x: 0.0, y: index as CGFloat * height }, size: CGSize { width, height } })];
@@ -3928,7 +3965,7 @@ fn make_settings_dropdown<T>(
     () = msg![env; button_label setAdjustsFontSizeToFitWidth:true];
     () = msg![env; button_label setMinimumFontSize:8.0];
     let white: id = msg_class![env; UIColor whiteColor];
-    let gray: id = msg_class![env; UIColor colorWithRed:0.62 green:0.63 blue:0.65 alpha:1.0];
+    let gray: id = settings_menu_gray(env);
     () = msg![env; button setTitleColor:white forState:UIControlStateNormal];
     () = msg![env; button setBackgroundColor:gray];
     () = msg![env; button setFrame:button_frame];
@@ -3958,8 +3995,10 @@ fn make_settings_dropdown<T>(
         () = msg![env; item setTitle:text forState:UIControlStateNormal];
         release(env, text);
         let item_label: id = msg![env; item titleLabel];
-        let item_font = picker_font(env, 12.0 * ui_scale);
+        let item_font = picker_font(env, 11.0 * ui_scale);
         () = msg![env; item_label setFont:item_font];
+        () = msg![env; item_label setAdjustsFontSizeToFitWidth:true];
+        () = msg![env; item_label setMinimumFontSize:6.0];
         () = msg![env; item setTitleColor:white forState:UIControlStateNormal];
         () = msg![env; item setBackgroundColor:gray];
         () = msg![env; item setFrame:(CGRect {
@@ -4005,8 +4044,10 @@ fn make_ios_version_dropdown(
     let button_font = picker_font(env, 13.0 * ui_scale);
     () = msg![env; button_label setFont:button_font];
     let white: id = msg_class![env; UIColor whiteColor];
-    let dark_gray: id = msg_class![env; UIColor colorWithRed:0.62 green:0.63 blue:0.65 alpha:1.0];
-    let magenta: id = msg_class![env; UIColor colorWithRed:0.16 green:0.38 blue:0.23 alpha:1.0];
+    let dark_gray: id = settings_menu_gray(env);
+    () = msg![env; button_label setAdjustsFontSizeToFitWidth:true];
+    () = msg![env; button_label setMinimumFontSize:8.0];
+    let magenta: id = settings_menu_selected_green(env);
     () = msg![env; button setTitleColor:white forState:UIControlStateNormal];
     () = msg![env; button setBackgroundColor:dark_gray];
     () = msg![env; button setFrame:button_frame];
@@ -4043,8 +4084,10 @@ fn make_ios_version_dropdown(
         () = msg![env; item setTitle:text forState:UIControlStateNormal];
         release(env, text);
         let item_label: id = msg![env; item titleLabel];
-        let item_font = picker_font(env, 12.0 * ui_scale);
+        let item_font = picker_font(env, 11.0 * ui_scale);
         () = msg![env; item_label setFont:item_font];
+        () = msg![env; item_label setAdjustsFontSizeToFitWidth:true];
+        () = msg![env; item_label setMinimumFontSize:6.0];
         let item_text_color: id = msg_class![env; UIColor whiteColor];
         () = msg![env; item setTitleColor:item_text_color forState:UIControlStateNormal];
         let item_color: id = if *tag == 0 { magenta } else { dark_gray };
@@ -4088,7 +4131,7 @@ fn make_device_model_dropdown(
         },
     };
 
-    let dark_gray: id = msg_class![env; UIColor colorWithRed:0.62 green:0.63 blue:0.65 alpha:1.0];
+    let dark_gray: id = settings_menu_gray(env);
 
     // Bordered container for the toggle button (a darker frame behind a lighter
     // inner button), so it reads as a control on the white menu background.
@@ -4114,6 +4157,8 @@ fn make_device_model_dropdown(
     () = msg![env; button_label setFont:button_font];
     let white: id = msg_class![env; UIColor whiteColor];
     () = msg![env; button setTitleColor:white forState:UIControlStateNormal];
+    () = msg![env; button_label setAdjustsFontSizeToFitWidth:true];
+    () = msg![env; button_label setMinimumFontSize:8.0];
     let light_gray: id = msg_class![env; UIColor darkGrayColor];
     () = msg![env; button setBackgroundColor:light_gray];
     () = msg![env; button setFrame:inner_frame];

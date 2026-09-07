@@ -363,6 +363,8 @@ pub struct Options {
     /// Request the native Core Audio host path where it is available.
     pub core_audio: bool,
     pub audio_backend: AudioBackend,
+    /// Reduce decoded audio to a lower sample rate to leave more CPU time for emulation.
+    pub low_audio_quality: bool,
     pub scale_hack: f32,
     pub deadzone: f32,
     pub analog_stick_tilt_controls: bool,
@@ -477,6 +479,7 @@ impl Default for Options {
             ios_version: None,
             core_audio: false,
             audio_backend: AudioBackend::Default,
+            low_audio_quality: false,
             scale_hack: 1.0,
             analog_stick_tilt_controls: true,
             deadzone: 0.1,
@@ -613,6 +616,10 @@ impl Options {
             let backend = AudioBackend::parse(value)?;
             self.core_audio = backend == AudioBackend::CoreAudio;
             self.audio_backend = backend;
+        } else if arg == "--low-audio-quality" || arg == "--low-audio-quality=on" {
+            self.low_audio_quality = true;
+        } else if arg == "--disable-low-audio-quality" || arg == "--low-audio-quality=off" {
+            self.low_audio_quality = false;
         } else if let Some(value) = arg.strip_prefix("--screen-size=") {
             let (w, h) = value
                 .split_once(|c| c == 'x' || c == 'X' || c == ',')
@@ -1043,5 +1050,17 @@ mod tests {
         options.parse_argument("--memory-management=light").unwrap();
         assert_eq!(options.texture_filtering, TextureFiltering::Trilinear);
         assert_eq!(options.memory_management, MemoryManagement::Light);
+    }
+
+    #[test]
+    fn parses_low_audio_quality_switch() {
+        let mut options = Options::default();
+        assert!(!options.low_audio_quality);
+        options.parse_argument("--low-audio-quality").unwrap();
+        assert!(options.low_audio_quality);
+        options
+            .parse_argument("--disable-low-audio-quality")
+            .unwrap();
+        assert!(!options.low_audio_quality);
     }
 }
