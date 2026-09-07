@@ -1,12 +1,12 @@
-# HyperHLE
+# RadekHLE
 
-**HyperHLE** is an independent fork of the touchHLE project. To avoid any confusion with the upstream repository, please review the key characteristics and context of this fork below.
+**RadekHLE** is an independent fork of the HyperHLE fork of the touchHLE project. To avoid any confusion with the upstream repository, please review the key characteristics and context of this fork below.
 
 ---
 
 ## Key Features
 * **Clean Codebase:** Developed completely independently without using or copying any code from touchHLE's GerritHub.
-* **Completely Independent:** HyperHLE is a standalone project. It is **not** supported, endorsed, or maintained by the original touchHLE developers.
+* **Completely Independent:** RadekHLE is a standalone project. It is **not** supported, endorsed, or maintained by the original touchHLE developers.
 
 ---
 
@@ -16,8 +16,8 @@ Previously, there was a major misunderstanding regarding the upstream developers
 
 The upstream developers' aggressive measures against certain forks were not a random crusade against the open-source spirit or the MPL 2.0 license, but a targeted response to a proven case of **source code theft** from touchHLE's GerritHub by a specific individual. 
 
-To ensure complete transparency and maintain a clean open-source ecosystem, the HyperHLE team wishes to state the following:
-* **No Code Theft:** HyperHLE is built entirely through independent development methods. We strictly respect the original work and comply fully with the **Mozilla Public License 2.0 (MPL 2.0)**.
+To ensure complete transparency and maintain a clean open-source ecosystem, the RadekHLE team wishes to state the following:
+* **No Code Theft:** RadekHLE is built entirely through independent development methods. We strictly respect the original work and comply fully with the **Mozilla Public License 2.0 (MPL 2.0)**.
 * **Malicious Actor Removed:** The individual responsible for the code theft discovered by hikari_no_yume was completely removed and banned from the HyperHLE repository earlier this year (around April/May). We do not tolerate or support code plagiarism under any circumstances.
 * **Communication Lines Open:** TimofeyLednev has established direct contact with hikari_no_yume and shared the necessary information to bridge the gap between the actual creator of the HyperHLE fork and the upstream team, ensuring any future concerns can be resolved through proper discussion.
 
@@ -33,12 +33,6 @@ This text was written by **TimofeyLednev** (also known on Discord by the Russian
 Timofey was banned from the official touchHLE server in April 2026 by ciciplusplus himself due to an accidental pull request, and was never unbanned. Alongside him, **Nekono** (also known as **j92580498-max**), the actual creator of the HyperHLE fork, was also banned at the same time.
 
 Thank you for reading and understanding the situation.
-
----
-
-## Community
-
-Join the [HyperHLE Discord server](https://discord.gg/taNP4aTvd) to discuss the project and get involved.
 
 ---
 
