@@ -25,12 +25,7 @@ To ensure complete transparency and maintain a clean open-source ecosystem, the 
 > ⚠️ **IMPORTANT WARNING:**
 > Despite the ongoing dialogue to resolve these past misunderstandings, please remember that the official touchHLE Discord server maintains a strict local policy. **DO NOT mention any forks there**, as discussing them will still result in an immediate, permanent ban.
 
-Our team remains committed to clean code compliance and transparency. We look forward to a peaceful, parallel existence where both projects can focus on pushing early iOS emulation forward.
-
-### Clarification Regarding Sheva
-We would also like to address the developer **Sheva**, who contributed to this development. Sheva was banned by the upstream community in the summer of 2024 for unrelated reasons. If the original developers are associating him with Neo-Nazism because of a brief 2-week joke/experimental fork called *naziHLE* created in early 2024, we want to clarify that this is a baseless assumption and he is not a Nazi. 
-
----
+Our team remains committed to clean code compliance and transparency. We look forward to a peaceful, parallel existence where both projects can focus on pushing early iOS emulation forward
 
 ### Credits & Context
 
