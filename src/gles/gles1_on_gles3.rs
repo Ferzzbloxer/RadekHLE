@@ -1007,12 +1007,14 @@ impl GLES for GLES1OnGLES3<'_> {
         let version = CStr::from_ptr(gl::GetString(gl::VERSION) as *const _);
         let vendor = CStr::from_ptr(gl::GetString(gl::VENDOR) as *const _);
         let renderer = CStr::from_ptr(gl::GetString(gl::RENDERER) as *const _);
-        crate::gles::trace_translator_event(format!(
-            "host version={} vendor={} renderer={}",
-            version.to_string_lossy(),
-            vendor.to_string_lossy(),
-            renderer.to_string_lossy()
-        ));
+        crate::gles::trace_translator_event(|| {
+            format!(
+                "host version={} vendor={} renderer={}",
+                version.to_string_lossy(),
+                vendor.to_string_lossy(),
+                renderer.to_string_lossy()
+            )
+        });
         format!(
             "GLES1 translated by GLES2 / {} / {} / {}",
             version.to_string_lossy(),
@@ -3247,7 +3249,7 @@ impl GLES for GLES1OnGLES3<'_> {
             None => return,
         };
         gl::UseProgram(program);
-        let mvp = unsafe { self.state.mvp() };
+        let mvp = self.state.mvp();
         let mvp_loc = gl::GetUniformLocation(program, b"u_mvp\0".as_ptr() as *const _);
         gl::UniformMatrix4fv(mvp_loc, 1, gl::FALSE, mvp.as_ptr());
         let modelview_loc = gl::GetUniformLocation(program, b"u_modelview\0".as_ptr() as *const _);

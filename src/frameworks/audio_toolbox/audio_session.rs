@@ -232,9 +232,6 @@ pub fn AudioSessionGetProperty(
                 session.preferred_hardware_io_buffer_duration,
             );
         }
-        kAudioSessionProperty_AudioInputAvailable => {
-            env.mem.write(out_data.cast::<u32>(), 1);
-        }
         kAudioSessionProperty_AudioRoute => {
             env.mem.write(out_data.cast::<u32>(), 0);
         }

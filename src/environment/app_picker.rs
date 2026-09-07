@@ -3180,11 +3180,11 @@ fn setup_quick_options(
     let mut scale_hack_buttons: Option<[id; 7]> = None;
     let mut custom_resolution_button: id = nil;
     let mut custom_resolution_row_center: CGFloat = 0.0;
-    let mut custom_resolution_menu: id = nil;
-    let mut custom_resolution_editor: id = nil;
-    let mut custom_resolution_width_field: id = nil;
-    let mut custom_resolution_height_field: id = nil;
-    let mut custom_resolution_error: id = nil;
+    let custom_resolution_menu: id;
+    let custom_resolution_editor: id;
+    let custom_resolution_width_field: id;
+    let custom_resolution_height_field: id;
+    let custom_resolution_error: id;
     let mut orientation_buttons: Option<[id; 4]> = None;
     let mut render_rotation_buttons: Option<[id; 5]> = None;
     let mut fps_limit_buttons: Option<[id; 4]> = None;

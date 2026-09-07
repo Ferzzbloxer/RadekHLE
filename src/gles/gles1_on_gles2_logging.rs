@@ -6,17 +6,19 @@ use std::time::Instant;
 static INITIALIZATION_LOGGED: AtomicBool = AtomicBool::new(false);
 static GL_STATE_SUMMARY_LOGGED: AtomicBool = AtomicBool::new(false);
 static INSTRUMENTATION_BANNER_LOGGED: AtomicBool = AtomicBool::new(false);
+static ENV_LOGGING_ENABLED: OnceLock<bool> = OnceLock::new();
 
 pub(crate) fn enabled() -> bool {
     crate::gles::translator_tracing_enabled()
-        || std::env::var_os("TOUCHHLE_GLES1_GLES2_LOG").is_some()
+        || *ENV_LOGGING_ENABLED
+            .get_or_init(|| std::env::var_os("TOUCHHLE_GLES1_GLES2_LOG").is_some())
 }
 
 pub struct GLES1to2Logger {
     operation_id: u64,
-    operation_name: String,
+    operation_name: &'static str,
     started_at: Instant,
-    context: String,
+    context: &'static str,
 }
 
 impl GLES1to2Logger {
@@ -24,12 +26,12 @@ impl GLES1to2Logger {
         self.operation_id
     }
 
-    pub fn new(operation_name: &str, context: &str) -> Self {
+    pub fn new(operation_name: &'static str, context: &'static str) -> Self {
         Self {
             operation_id: crate::gles::next_gl_call_id(),
-            operation_name: operation_name.to_owned(),
+            operation_name,
             started_at: Instant::now(),
-            context: context.to_owned(),
+            context,
         }
     }
 
@@ -363,7 +365,6 @@ struct GLStateManager {
     scissor_test_enabled: bool,
     logical_size: (u32, u32),
     drawable_size: (u32, u32),
-    last_updated: Instant,
     change_count: u64,
     last_pipeline_log: Option<(
         (i32, i32, i32, i32),
@@ -388,7 +389,6 @@ fn viewport_state() -> &'static Mutex<GLStateManager> {
             scissor_test_enabled: false,
             logical_size: (480, 320),
             drawable_size: (0, 0),
-            last_updated: Instant::now(),
             change_count: 0,
             last_pipeline_log: None,
         })
@@ -407,6 +407,9 @@ pub fn log_viewport_state_change(
 }
 
 pub fn reset_state() {
+    if !enabled() {
+        return;
+    }
     let mut state = viewport_state().lock().unwrap();
     state.current_viewport = (0, 0, 0, 0);
     state.previous_viewport = (0, 0, 0, 0);
@@ -416,18 +419,19 @@ pub fn reset_state() {
     state.scissor_changed = false;
     state.scissor_was_explicitly_set = false;
     state.last_gpu_verify = None;
-    state.last_updated = Instant::now();
     state.change_count = 0;
     state.last_pipeline_log = None;
 }
 
 pub fn update_viewport_state(viewport: (i32, i32, i32, i32)) {
+    if !enabled() {
+        return;
+    }
     let mut state = viewport_state().lock().unwrap();
     let old = state.current_viewport;
     state.previous_viewport = old;
     state.current_viewport = viewport;
     state.viewport_changed = old != viewport;
-    state.last_updated = Instant::now();
     if state.viewport_changed {
         state.change_count += 1;
     }
@@ -439,13 +443,15 @@ pub fn update_viewport_state(viewport: (i32, i32, i32, i32)) {
 }
 
 pub fn update_scissor_state(scissor: (i32, i32, i32, i32)) {
+    if !enabled() {
+        return;
+    }
     let mut state = viewport_state().lock().unwrap();
     let old = state.current_scissor;
     state.previous_scissor = old;
     state.current_scissor = scissor;
     state.scissor_changed = old != scissor;
     state.scissor_was_explicitly_set = true;
-    state.last_updated = Instant::now();
     drop(state);
     if old != scissor && enabled() {
         log!(
@@ -462,17 +468,22 @@ pub fn update_scissor_state(scissor: (i32, i32, i32, i32)) {
     }
 }
 
-pub fn set_scissor_test_enabled(enabled: bool) {
+pub fn set_scissor_test_enabled(value: bool) {
+    if !enabled() {
+        return;
+    }
     let mut state = viewport_state().lock().unwrap();
-    state.scissor_test_enabled = enabled;
+    state.scissor_test_enabled = value;
 }
 
-pub fn update_scissor_test_enabled(enabled: bool) {
-    let mut state = viewport_state().lock().unwrap();
-    state.scissor_test_enabled = enabled;
+pub fn update_scissor_test_enabled(value: bool) {
+    set_scissor_test_enabled(value);
 }
 
 pub fn sync_scissor_to_viewport() -> Option<(i32, i32, i32, i32)> {
+    if !enabled() {
+        return None;
+    }
     let mut state = viewport_state().lock().unwrap();
     if state.scissor_was_explicitly_set || state.current_scissor == state.current_viewport {
         return None;
@@ -481,7 +492,6 @@ pub fn sync_scissor_to_viewport() -> Option<(i32, i32, i32, i32)> {
     state.previous_scissor = old;
     state.current_scissor = state.current_viewport;
     state.scissor_changed = true;
-    state.last_updated = Instant::now();
     let viewport = state.current_viewport;
     drop(state);
     if enabled() {

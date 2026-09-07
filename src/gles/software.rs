@@ -1638,7 +1638,7 @@ impl GLES for SoftwareGLES<'_> {
         &mut self,
         target: GLenum,
         level: GLint,
-        internalformat: GLint,
+        _internalformat: GLint,
         width: GLsizei,
         height: GLsizei,
         border: GLint,
@@ -1706,9 +1706,9 @@ impl GLES for SoftwareGLES<'_> {
                         }
                         gl::UNSIGNED_SHORT_5_6_5 => {
                             let value = u16::from_ne_bytes([*src, *src.add(1)]);
-                            output[dst] = ((value >> 11) as u8 * 255 / 31);
-                            output[dst + 1] = (((value >> 5) & 0x3f) as u8 * 255 / 63);
-                            output[dst + 2] = ((value & 0x1f) as u8 * 255 / 31);
+                            output[dst] = (value >> 11) as u8 * 255 / 31;
+                            output[dst + 1] = ((value >> 5) & 0x3f) as u8 * 255 / 63;
+                            output[dst + 2] = (value & 0x1f) as u8 * 255 / 31;
                             output[dst + 3] = 255;
                         }
                         gl::UNSIGNED_SHORT_4_4_4_4 => {

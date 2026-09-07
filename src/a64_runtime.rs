@@ -611,7 +611,7 @@ pub fn can_dispatch(symbol: &str) -> bool {
         | "ZNKSt3__121__basic_string_commonILb1EE20__throw_length_errorEv"
         | "ZNKSt3__16locale9has_facetERNS0_2idE" | "ZNKSt3__16locale9use_facetERNS0_2idE"
         | "ZNKSt3__18ios_base6getlocEv" | "ZNKSt3__111this_thread9sleep_forERKNS_6chrono8durationIxNS_5ratioILl1ELl1000000000EEEEE"
-        |         "ZNSt3__112__next_primeEm" | "ZNSt3__16thread20hardware_concurrencyEv" | "ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE5eraseEmm"
+        |         "ZNSt3__112__next_primeEm" | "ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE5eraseEmm"
         | "ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE6__initEPKcmm"
         | "ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE6__initEmc"
         | "ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE6appendEPKc"
@@ -3569,7 +3569,7 @@ pub fn dispatch(
             Ok(true)
         }
         value if value.starts_with("ZNSt3__") || value.starts_with("ZNKSt3__") => {
-            return_value(context, if context.regs[0] != 0 { context.regs[0] } else { 0 });
+            return_value(context, context.regs[0]);
             Ok(true)
         }
         "compressBound" => {
@@ -3732,18 +3732,6 @@ pub fn dispatch(
             if output != 0 {
                 mem.fill_bytes(output, 0, 28).map_err(str::to_owned)?;
             }
-            return_value(context, 0);
-            Ok(true)
-        }
-        "pthread_mutex_init" => {
-            let output = context.regs[0];
-            if output != 0 {
-                mem.fill_bytes(output, 0, 12).map_err(str::to_owned)?;
-            }
-            return_value(context, 0);
-            Ok(true)
-        }
-        "pthread_setname_np" => {
             return_value(context, 0);
             Ok(true)
         }

@@ -11,7 +11,6 @@ use std::sync::{LazyLock, Mutex};
 
 static FILE_LOGGING_ENABLED: AtomicBool = AtomicBool::new(true);
 static LOG_LINES: AtomicUsize = AtomicUsize::new(0);
-static VERBOSE_LOGGING_ENABLED: AtomicBool = AtomicBool::new(false);
 const LOG_FLUSH_INTERVAL: usize = 64;
 
 pub fn set_file_logging(enabled: bool) {
@@ -24,14 +23,6 @@ pub fn set_file_logging(enabled: bool) {
 pub fn file_logging_enabled() -> bool {
     FILE_LOGGING_ENABLED.load(Ordering::Relaxed)
 }
-pub fn set_verbose_logging(enabled: bool) {
-    VERBOSE_LOGGING_ENABLED.store(enabled, Ordering::Relaxed);
-}
-
-pub fn verbose_logging_enabled() -> bool {
-    VERBOSE_LOGGING_ENABLED.load(Ordering::Relaxed)
-}
-
 pub fn append_log_line(line: &str) {
     if !file_logging_enabled() {
         return;
@@ -43,12 +34,6 @@ pub fn append_log_line(line: &str) {
         if count % LOG_FLUSH_INTERVAL == 0 {
             let _ = std::io::Write::flush(&mut *log_file);
         }
-    }
-}
-
-pub fn flush_log() {
-    if let Ok(mut log_file) = get_log_file().lock() {
-        let _ = std::io::Write::flush(&mut *log_file);
     }
 }
 

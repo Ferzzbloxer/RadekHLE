@@ -239,12 +239,6 @@ where
     let trace = env.options.trace_gl_errors;
     let _perf_scope = crate::perf::gles_scope();
     let caller = std::panic::Location::caller();
-    // `sync_context` now returns None when no GL context is bound to the
-    // calling thread. The guard above already short-circuits the common
-    // case where the *guest* never made a context current, but on edge
-    // cases (e.g. context destroyed mid-call, headless GLES driver missing,
-    // see HyperHLE log #5) we may still hit None here. Treat it the same
-    // as the no-context branch above: log once and return the default.
     let Some(mut gles) = super::sync_context(
         &mut env.framework_state.opengles,
         &mut env.objc,
@@ -271,11 +265,9 @@ where
         log_gpu_state(gles.as_mut(), "after-call");
     }
     if crate::gles::translator_tracing_enabled() && gles.is_translator() {
-        crate::gles::trace_translator_event(format!(
-            "guest call at {}:{}",
-            caller.file(),
-            caller.line()
-        ));
+        crate::gles::trace_translator_event(|| {
+            format!("guest call at {}:{}", caller.file(), caller.line())
+        });
     }
     let err = unsafe { gles.GetError() };
     trace_gl_error(
@@ -297,14 +289,6 @@ where
 {
     let trace = env.options.trace_gl_errors;
     let caller = std::panic::Location::caller();
-    // _no_skip historically panicked if there was no current context,
-    // but real games (HyperHLE log #5 / Resident Evil 4) hit this on
-    // worker threads that issue GL calls after `setCurrentContext:nil`.
-    // Apple's documented behaviour is "GL calls silently fail" — mirror
-    // that by returning the type's default instead of aborting the
-    // emulator. The trade-off vs. with_ctx_and_mem is unchanged: we still
-    // attempt the call when a context exists, even if it isn't the one
-    // the guest expects.
     let Some(mut gles) = super::sync_context(
         &mut env.framework_state.opengles,
         &mut env.objc,

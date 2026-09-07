@@ -6,7 +6,6 @@
 
 ## Key Features
 * **Clean Codebase:** Developed completely independently without using or copying any code from touchHLE's GerritHub.
-* **AI-Assisted Development:** This fork utilizes AI tools and assistance to accelerate development and implement features.
 * **Completely Independent:** HyperHLE is a standalone project. It is **not** supported, endorsed, or maintained by the original touchHLE developers.
 
 ---

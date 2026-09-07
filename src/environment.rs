@@ -114,7 +114,6 @@ pub struct Environment {
     /// Set to [true] when created using [Environment::new_without_app].
     pub dump_file: Option<std::fs::File>,
     pub is_app_picker: bool,
-    rtcs_corruptor: crate::corrupt::Corruptor,
     pub(crate) active_host_function: Option<String>,
     yielder: *const Yielder<Environment, Environment>,
     // The amount of ticks to run for Some(value), or single-stepping for None.
@@ -750,7 +749,6 @@ impl Environment {
             thread_local_framework_state: Default::default(),
         };
 
-        let rtcs_enabled = options.rtcs;
         let mut env = Environment {
             startup_time,
             bundle: NullableBox::new(bundle),
@@ -772,7 +770,6 @@ impl Environment {
             env_vars: Default::default(),
             dump_file: None,
             is_app_picker: false,
-            rtcs_corruptor: crate::corrupt::Corruptor::new(rtcs_enabled),
             active_host_function: None,
             yielder: std::ptr::null(),
             remaining_ticks: None,
@@ -902,8 +899,6 @@ impl Environment {
             thread_local_framework_state: Default::default(),
         };
 
-        let rtcs_enabled = options.rtcs;
-
         let mut env = Environment {
             startup_time,
             bundle: NullableBox::new(bundle),
@@ -925,7 +920,6 @@ impl Environment {
             env_vars: Default::default(),
             dump_file: None,
             is_app_picker: true,
-            rtcs_corruptor: crate::corrupt::Corruptor::new(rtcs_enabled),
             active_host_function: None,
             yielder: std::ptr::null(),
             remaining_ticks: None,
@@ -988,7 +982,6 @@ impl Environment {
             env_vars: HashMap::new(),
             dump_file: None,
             is_app_picker: true,
-            rtcs_corruptor: crate::corrupt::Corruptor::new(false),
             active_host_function: None,
             yielder: std::ptr::null(),
             remaining_ticks: None,
@@ -1504,7 +1497,6 @@ impl Environment {
         let panic_cell = self.panic_cell.clone();
         let mut stepping = false;
         loop {
-            self.rtcs_corruptor.tick();
             if stepping {
                 self.remaining_ticks = None;
             } else {

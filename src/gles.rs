@@ -86,7 +86,6 @@ pub use touchHLE_gl_bindings::gles2 as gles2_raw;
 pub use touchHLE_gl_bindings::gles30 as gles30_raw;
 
 use crate::environment::Environment;
-use crate::window::GLVersion;
 use gles1_native::GLES1NativeContext;
 use gles1_on_gl2::GLES1OnGL2Context;
 use gles1_on_gles2::GLES1OnGLES2Context;
@@ -101,8 +100,10 @@ pub use gles_generic::GLES;
 pub use software::SoftwareGLESContext;
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
+use std::sync::OnceLock;
 
 static TRANSLATOR_TRACE_EVENTS: AtomicU32 = AtomicU32::new(0);
+static TRANSLATOR_TRACE_ENV: OnceLock<bool> = OnceLock::new();
 static TRANSLATOR_TRACING_ENABLED: AtomicBool = AtomicBool::new(false);
 static VERBOSE_LOGGING_ENABLED: AtomicBool = AtomicBool::new(false);
 static SHADER_COMPATIBILITY_FIXES: AtomicBool = AtomicBool::new(true);
@@ -176,13 +177,15 @@ pub(crate) fn shader_compatibility_fixes_enabled() -> bool {
 
 pub(crate) fn translator_tracing_enabled() -> bool {
     TRANSLATOR_TRACING_ENABLED.load(Ordering::Relaxed)
-        || std::env::var_os("TOUCHHLE_TRACE_TRANSLATOR").is_some()
+        || *TRANSLATOR_TRACE_ENV
+            .get_or_init(|| std::env::var_os("TOUCHHLE_TRACE_TRANSLATOR").is_some())
 }
 
-pub(crate) fn trace_translator_event(event: String) {
+pub(crate) fn trace_translator_event(build_event: impl FnOnce() -> String) {
     if !translator_tracing_enabled() {
         return;
     }
+    let event = build_event();
     let number = TRANSLATOR_TRACE_EVENTS.fetch_add(1, Ordering::Relaxed);
     if number < 512 {
         log!("[translator] #{:03} {}", number + 1, event);
