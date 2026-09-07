@@ -406,31 +406,43 @@ pub fn upscale_rgba8(
     if scale <= 1 || width == 0 || height == 0 {
         return None;
     }
-    let scale = u32::from(scale);
+    let maximum_scale = match crate::gles::memory_management() {
+        0 => 2,
+        1 => 3,
+        _ => 4,
+    };
+    let scale = u32::from(scale.min(maximum_scale));
+    if scale <= 1 {
+        return None;
+    }
     let output_width = width.checked_mul(scale)?;
     let output_height = height.checked_mul(scale)?;
-    let source_len = usize::try_from(width)
-        .ok()?
-        .checked_mul(usize::try_from(height).ok()?)?
-        .checked_mul(4)?;
+    let source_width = usize::try_from(width).ok()?;
+    let source_height = usize::try_from(height).ok()?;
+    let output_width_usize = usize::try_from(output_width).ok()?;
+    let output_height_usize = usize::try_from(output_height).ok()?;
+    let source_len = source_width.checked_mul(source_height)?.checked_mul(4)?;
     if pixels.len() < source_len {
         return None;
     }
-    let output_len = usize::try_from(output_width)
-        .ok()?
-        .checked_mul(usize::try_from(output_height).ok()?)?
+    let output_len = output_width_usize
+        .checked_mul(output_height_usize)?
         .checked_mul(4)?;
-    let mut output = vec![0; output_len];
-    let source_width = usize::try_from(width).ok()?;
-    let output_width_usize = usize::try_from(output_width).ok()?;
     let scale_usize = usize::try_from(scale).ok()?;
-    for y in 0..usize::try_from(output_height).ok()? {
-        let source_y = y / scale_usize;
-        for x in 0..output_width_usize {
-            let source_x = x / scale_usize;
-            let source = (source_y * source_width + source_x) * 4;
-            let target = (y * output_width_usize + x) * 4;
-            output[target..target + 4].copy_from_slice(&pixels[source..source + 4]);
+    let mut output = vec![0; output_len];
+    let mut expanded_row = Vec::with_capacity(output_width_usize * 4);
+    for source_y in 0..source_height {
+        let source_row_start = source_y * source_width * 4;
+        let source_row = &pixels[source_row_start..source_row_start + source_width * 4];
+        expanded_row.clear();
+        for source_pixel in source_row.chunks_exact(4) {
+            for _ in 0..scale_usize {
+                expanded_row.extend_from_slice(source_pixel);
+            }
+        }
+        for row_repeat in 0..scale_usize {
+            let target_row = (source_y * scale_usize + row_repeat) * output_width_usize * 4;
+            output[target_row..target_row + expanded_row.len()].copy_from_slice(&expanded_row);
         }
     }
     Some((output, output_width, output_height))
@@ -446,27 +458,40 @@ pub fn upscale_rgba8_words(
     if scale <= 1 || width == 0 || height == 0 {
         return None;
     }
-    let scale = u32::from(scale);
+    let maximum_scale = match crate::gles::memory_management() {
+        0 => 2,
+        1 => 3,
+        _ => 4,
+    };
+    let scale = u32::from(scale.min(maximum_scale));
+    if scale <= 1 {
+        return None;
+    }
     let output_width = width.checked_mul(scale)?;
     let output_height = height.checked_mul(scale)?;
-    let source_len = usize::try_from(width)
-        .ok()?
-        .checked_mul(usize::try_from(height).ok()?)?;
+    let source_width = usize::try_from(width).ok()?;
+    let source_height = usize::try_from(height).ok()?;
+    let output_width_usize = usize::try_from(output_width).ok()?;
+    let output_height_usize = usize::try_from(output_height).ok()?;
+    let source_len = source_width.checked_mul(source_height)?;
     if pixels.len() < source_len {
         return None;
     }
-    let output_len = usize::try_from(output_width)
-        .ok()?
-        .checked_mul(usize::try_from(output_height).ok()?)?;
-    let mut output = vec![0; output_len];
-    let source_width = usize::try_from(width).ok()?;
-    let output_width_usize = usize::try_from(output_width).ok()?;
+    let output_len = output_width_usize.checked_mul(output_height_usize)?;
     let scale_usize = usize::try_from(scale).ok()?;
-    for y in 0..usize::try_from(output_height).ok()? {
-        let source_y = y / scale_usize;
-        for x in 0..output_width_usize {
-            let source_x = x / scale_usize;
-            output[y * output_width_usize + x] = pixels[source_y * source_width + source_x];
+    let mut output = vec![0; output_len];
+    let mut expanded_row = Vec::with_capacity(output_width_usize);
+    for source_y in 0..source_height {
+        expanded_row.clear();
+        let source_row = &pixels[source_y * source_width..(source_y + 1) * source_width];
+        for &pixel in source_row {
+            for _ in 0..scale_usize {
+                expanded_row.push(pixel);
+            }
+        }
+        for row_repeat in 0..scale_usize {
+            let target_row = (source_y * scale_usize + row_repeat) * output_width_usize;
+            output[target_row..target_row + output_width_usize].copy_from_slice(&expanded_row);
         }
     }
     Some((output, output_width, output_height))

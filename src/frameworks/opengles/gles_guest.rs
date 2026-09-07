@@ -1924,6 +1924,46 @@ fn maybe_demipmap_min_filter(env: &Environment, pname: GLenum, param: GLint) -> 
     demipmap_filter_value(pname, param)
 }
 
+fn override_texture_filter_value(
+    filtering: crate::options::TextureFiltering,
+    pname: GLenum,
+    param: GLint,
+) -> GLint {
+    use crate::options::TextureFiltering;
+    match filtering {
+        TextureFiltering::Default => param,
+        TextureFiltering::Bilinear | TextureFiltering::Anisotropic => {
+            if pname == gles11::TEXTURE_MIN_FILTER || pname == gles11::TEXTURE_MAG_FILTER {
+                gles11::LINEAR as GLint
+            } else {
+                param
+            }
+        }
+        TextureFiltering::Trilinear => {
+            if pname == gles11::TEXTURE_MIN_FILTER {
+                gles11::LINEAR_MIPMAP_LINEAR as GLint
+            } else if pname == gles11::TEXTURE_MAG_FILTER {
+                gles11::LINEAR as GLint
+            } else {
+                param
+            }
+        }
+    }
+}
+
+fn override_texture_filter(env: &Environment, pname: GLenum, param: GLint) -> GLint {
+    override_texture_filter_value(env.options.texture_filtering, pname, param)
+}
+
+fn configured_texture_min_filter(env: &Environment) -> Option<GLint> {
+    use crate::options::TextureFiltering;
+    match env.options.texture_filtering {
+        TextureFiltering::Default => None,
+        TextureFiltering::Bilinear | TextureFiltering::Anisotropic => Some(gles11::LINEAR as GLint),
+        TextureFiltering::Trilinear => Some(gles11::LINEAR_MIPMAP_LINEAR as GLint),
+    }
+}
+
 fn glTexParameteri(env: &mut Environment, target: GLenum, pname: GLenum, param: GLint) {
     {
         use std::sync::atomic::{AtomicBool, Ordering};
@@ -1940,6 +1980,7 @@ fn glTexParameteri(env: &mut Environment, target: GLenum, pname: GLenum, param: 
     if pname == gles11::TEXTURE_CROP_RECT_OES {
         return;
     }
+    let param = override_texture_filter(env, pname, param);
     let param = maybe_demipmap_min_filter(env, pname, param);
     with_ctx_and_mem(env, |gles, _mem| unsafe {
         gles.TexParameteri(target, pname, param)
@@ -1951,7 +1992,8 @@ fn glTexParameterf(env: &mut Environment, target: GLenum, pname: GLenum, param: 
     }
     // Floats can also be used to pass enum-valued min-filter params (an
     // OpenGL quirk), so route them through the same substitution.
-    let param = maybe_demipmap_min_filter(env, pname, param as GLint) as GLfloat;
+    let param = override_texture_filter(env, pname, param as GLint);
+    let param = maybe_demipmap_min_filter(env, pname, param) as GLfloat;
     with_ctx_and_mem(env, |gles, _mem| unsafe {
         gles.TexParameterf(target, pname, param)
     })
@@ -1961,6 +2003,7 @@ fn glTexParameterx(env: &mut Environment, target: GLenum, pname: GLenum, param: 
         return;
     }
     // Fixed-point can also encode enum values; route through substitution.
+    let param = override_texture_filter(env, pname, param);
     let param = maybe_demipmap_min_filter(env, pname, param) as GLfixed;
     with_ctx_and_mem(env, |gles, _mem| unsafe {
         gles.TexParameterx(target, pname, param)
@@ -1992,17 +2035,21 @@ fn glTexParameteriv(env: &mut Environment, target: GLenum, pname: GLenum, params
         });
         return;
     }
-    let fix_min_filter = env.options.fix_texture_min_filter && pname == gles11::TEXTURE_MIN_FILTER;
+    let filtering = env.options.texture_filtering;
+    let fix_min_filter = env.options.fix_texture_min_filter;
     with_ctx_and_mem(env, |gles, mem| unsafe {
         let params_ptr = mem.ptr_at(params, 1);
-        if fix_min_filter {
-            let original: GLint = *params_ptr;
-            let substituted = demipmap_filter_value(pname, original);
-            if substituted != original {
-                let v = [substituted];
-                gles.TexParameteriv(target, pname, v.as_ptr());
-                return;
-            }
+        let original: GLint = *params_ptr;
+        let overridden = override_texture_filter_value(filtering, pname, original);
+        let substituted = if fix_min_filter {
+            demipmap_filter_value(pname, overridden)
+        } else {
+            overridden
+        };
+        if substituted != original {
+            let v = [substituted];
+            gles.TexParameteriv(target, pname, v.as_ptr());
+            return;
         }
         gles.TexParameteriv(target, pname, params_ptr)
     })
@@ -2038,17 +2085,21 @@ fn glTexParameterfv(
         });
         return;
     }
-    let fix_min_filter = env.options.fix_texture_min_filter && pname == gles11::TEXTURE_MIN_FILTER;
+    let filtering = env.options.texture_filtering;
+    let fix_min_filter = env.options.fix_texture_min_filter;
     with_ctx_and_mem(env, |gles, mem| unsafe {
         let params_ptr = mem.ptr_at(params, 1);
-        if fix_min_filter {
-            let original: GLfloat = *params_ptr;
-            let substituted = demipmap_filter_value(pname, original as GLint) as GLfloat;
-            if substituted != original {
-                let v = [substituted];
-                gles.TexParameterfv(target, pname, v.as_ptr());
-                return;
-            }
+        let original: GLfloat = *params_ptr;
+        let overridden = override_texture_filter_value(filtering, pname, original as GLint);
+        let substituted = if fix_min_filter {
+            demipmap_filter_value(pname, overridden)
+        } else {
+            overridden
+        } as GLfloat;
+        if substituted != original {
+            let v = [substituted];
+            gles.TexParameterfv(target, pname, v.as_ptr());
+            return;
         }
         gles.TexParameterfv(target, pname, params_ptr)
     })
@@ -2084,17 +2135,21 @@ fn glTexParameterxv(
         });
         return;
     }
-    let fix_min_filter = env.options.fix_texture_min_filter && pname == gles11::TEXTURE_MIN_FILTER;
+    let filtering = env.options.texture_filtering;
+    let fix_min_filter = env.options.fix_texture_min_filter;
     with_ctx_and_mem(env, |gles, mem| unsafe {
         let params_ptr = mem.ptr_at(params, 1);
-        if fix_min_filter {
-            let original: GLfixed = *params_ptr;
-            let substituted = demipmap_filter_value(pname, original) as GLfixed;
-            if substituted != original {
-                let v = [substituted];
-                gles.TexParameterxv(target, pname, v.as_ptr());
-                return;
-            }
+        let original: GLfixed = *params_ptr;
+        let overridden = override_texture_filter_value(filtering, pname, original);
+        let substituted = if fix_min_filter {
+            demipmap_filter_value(pname, overridden)
+        } else {
+            overridden
+        } as GLfixed;
+        if substituted != original {
+            let v = [substituted];
+            gles.TexParameterxv(target, pname, v.as_ptr());
+            return;
         }
         gles.TexParameterxv(target, pname, params_ptr)
     })
@@ -2187,6 +2242,7 @@ fn glTexImage2D(
     let fix_filter = env.options.fix_texture_min_filter && level == 0;
     let texture_upscaler = env.options.texture_upscaler;
     let anisotropic_filtering = env.options.anisotropic_filtering;
+    let configured_min_filter = configured_texture_min_filter(env);
     with_ctx_and_mem(env, |gles, mem| unsafe {
         let mut alignment = 4;
         gles.GetIntegerv(gles11::UNPACK_ALIGNMENT, &mut alignment);
@@ -2263,6 +2319,11 @@ fn glTexImage2D(
                 log_dbg!("fix_texture_min_filter: forcing GL_TEXTURE_MIN_FILTER=GL_LINEAR after level-0 texture upload");
             }
             gles.TexParameteri(target, gles11::TEXTURE_MIN_FILTER, gles11::LINEAR as GLint);
+        }
+        if !fix_filter && level == 0 {
+            if let Some(filter) = configured_min_filter {
+                gles.TexParameteri(target, gles11::TEXTURE_MIN_FILTER, filter);
+            }
         }
         if anisotropic_filtering > 1 {
             gles.TexParameterf(
@@ -2342,6 +2403,7 @@ fn glCompressedTexImage2D(
     let no_texture_compression = env.options.no_texture_compression;
     let texture_upscaler = env.options.texture_upscaler;
     let anisotropic_filtering = env.options.anisotropic_filtering;
+    let configured_min_filter = configured_texture_min_filter(env);
     with_ctx_and_mem(env, |gles, mem| unsafe {
         let data: *const GLvoid = mem
             .ptr_at(data.cast::<u8>(), image_size.try_into().unwrap())
@@ -2394,6 +2456,11 @@ fn glCompressedTexImage2D(
                         gles11::TEXTURE_MAX_ANISOTROPY_EXT,
                         anisotropic_filtering as GLfloat,
                     );
+                }
+                if !fix_filter && level == 0 {
+                    if let Some(filter) = configured_min_filter {
+                        gles.TexParameteri(target, gles11::TEXTURE_MIN_FILTER, filter);
+                    }
                 }
                 return;
             }
@@ -2485,6 +2552,11 @@ fn glCompressedTexImage2D(
 
         if fix_filter {
             gles.TexParameteri(target, gles11::TEXTURE_MIN_FILTER, gles11::LINEAR as GLint);
+        }
+        if !fix_filter && level == 0 {
+            if let Some(filter) = configured_min_filter {
+                gles.TexParameteri(target, gles11::TEXTURE_MIN_FILTER, filter);
+            }
         }
         if anisotropic_filtering > 1 {
             gles.TexParameterf(
@@ -5882,6 +5954,33 @@ pub const FUNCTIONS: FunctionExports = &[
 #[cfg(test)]
 mod shader_preprocessor_normalization_tests {
     use super::normalize_shader_preprocessor_whitespace;
+    use super::override_texture_filter_value;
+    use crate::gles::gles11_raw as gles11;
+    use crate::options::TextureFiltering;
+
+    #[test]
+    fn texture_filter_overrides_are_scoped_to_filter_parameters() {
+        assert_eq!(
+            override_texture_filter_value(
+                TextureFiltering::Bilinear,
+                gles11::TEXTURE_MIN_FILTER,
+                gles11::NEAREST_MIPMAP_LINEAR as i32,
+            ),
+            gles11::LINEAR as i32
+        );
+        assert_eq!(
+            override_texture_filter_value(TextureFiltering::Trilinear, 0x2802, 7),
+            7
+        );
+        assert_eq!(
+            override_texture_filter_value(
+                TextureFiltering::Trilinear,
+                gles11::TEXTURE_MIN_FILTER,
+                gles11::NEAREST as i32,
+            ),
+            gles11::LINEAR_MIPMAP_LINEAR as i32
+        );
+    }
 
     #[test]
     fn inserts_space_before_comment_on_endif() {

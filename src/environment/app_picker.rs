@@ -294,6 +294,7 @@ struct AppPickerDelegateHostObject {
     log_file: Option<bool>,
     trace_gl_errors: Option<bool>,
     verbose_logging: Option<bool>,
+    shader_compatibility_fixes: Option<bool>,
     fast_memory: Option<bool>,
     force_32_bit: Option<bool>,
     force_64_bit: Option<bool>,
@@ -522,6 +523,10 @@ const CLASSES: ClassExports = objc_classes! {
 - (())verboseLogging:(id)switch {
     let switch_state: bool = msg![env; switch isOn];
     env.objc.borrow_mut::<AppPickerDelegateHostObject>(this).verbose_logging = Some(switch_state);
+}
+- (())shaderCompatibilityFixes:(id)switch {
+    let switch_state: bool = msg![env; switch isOn];
+    env.objc.borrow_mut::<AppPickerDelegateHostObject>(this).shader_compatibility_fixes = Some(switch_state);
 }
 - (())fastMemory:(id)switch { // UISwitch*
     let switch_state: bool = msg![env; switch isOn];
@@ -1003,6 +1008,7 @@ fn app_picker_inner(
     let mut quick_options_vsync = false;
     let mut quick_options_battery_saver = false;
     let mut quick_options_verbose_logging = false;
+    let mut quick_options_shader_compatibility_fixes = true;
     let mut quick_options_angle_driver = false;
     let mut quick_options_log_file = true;
     let mut quick_options_trace_gl_errors = false;
@@ -1087,9 +1093,9 @@ fn app_picker_inner(
             let item_tag: NSInteger = msg![env; item tag];
             let selected = item_tag == tag as NSInteger;
             let color: id = if selected {
-                msg_class![env; UIColor greenColor]
+                msg_class![env; UIColor colorWithRed:0.16 green:0.38 blue:0.23 alpha:1.0]
             } else {
-                msg_class![env; UIColor darkGrayColor]
+                msg_class![env; UIColor colorWithRed:0.62 green:0.63 blue:0.65 alpha:1.0]
             };
             () = msg![env; item setBackgroundColor:color];
         }
@@ -1713,6 +1719,8 @@ fn app_picker_inner(
             quick_options_battery_saver = enabled;
         } else if let Some(enabled) = std::mem::take(&mut host_obj.verbose_logging) {
             quick_options_verbose_logging = enabled;
+        } else if let Some(enabled) = std::mem::take(&mut host_obj.shader_compatibility_fixes) {
+            quick_options_shader_compatibility_fixes = enabled;
         } else if let Some(enabled) = std::mem::take(&mut host_obj.frame_generation) {
             quick_options_frame_generation = enabled;
             () = msg![env; (quick_options_stuff.frame_generation_switch) setOn:enabled];
@@ -1992,6 +2000,14 @@ fn app_picker_inner(
             "--verbose-logging"
         } else {
             "--disable-verbose-logging"
+        }
+        .to_string(),
+    );
+    option_args.push(
+        if quick_options_shader_compatibility_fixes {
+            "--shader-compatibility-fixes"
+        } else {
+            "--disable-shader-compatibility-fixes"
         }
         .to_string(),
     );
@@ -2956,6 +2972,8 @@ fn setup_quick_options(
         RowKind::Switch("pulseAudio:", false),
         RowKind::Label("Graphics API"),
         RowKind::GraphicsApiDropdown,
+        RowKind::Label("Shader compatibility fixes"),
+        RowKind::Switch("shaderCompatibilityFixes:", true),
         RowKind::Label("GLES override version"),
         RowKind::GlesOverrideDropdown,
         RowKind::Label("Custom driver"),
@@ -3645,9 +3663,9 @@ fn update_device_model_menu(
         let tag: NSInteger = msg![env; item tag];
         let is_selected = selected.is_some_and(|v| v as NSInteger == tag);
         let color: id = if is_selected {
-            msg_class![env; UIColor greenColor]
+            msg_class![env; UIColor colorWithRed:0.16 green:0.38 blue:0.23 alpha:1.0]
         } else {
-            msg_class![env; UIColor darkGrayColor]
+            msg_class![env; UIColor colorWithRed:0.62 green:0.63 blue:0.65 alpha:1.0]
         };
         let white: id = msg_class![env; UIColor whiteColor];
         () = msg![env; item setTitleColor:white forState:UIControlStateNormal];
@@ -3695,14 +3713,18 @@ fn update_graphics_api_dropdown(
     items: &[id],
     value: crate::options::GraphicsApi,
 ) {
+    let selected_color: id =
+        msg_class![env; UIColor colorWithRed:0.16 green:0.38 blue:0.23 alpha:1.0];
+    let unselected_color: id =
+        msg_class![env; UIColor colorWithRed:0.62 green:0.63 blue:0.65 alpha:1.0];
+    let white: id = msg_class![env; UIColor whiteColor];
     for (index, &item) in items.iter().enumerate() {
         let color: id = if GRAPHICS_API_ENTRIES[index].1 == value {
-            msg_class![env; UIColor greenColor]
+            selected_color
         } else {
-            msg_class![env; UIColor darkGrayColor]
+            unselected_color
         };
         () = msg![env; item setBackgroundColor:color];
-        let white: id = msg_class![env; UIColor whiteColor];
         () = msg![env; item setTitleColor:white forState:UIControlStateNormal];
     }
     let title = ns_string::get_static_str(env, value.label());
@@ -3727,11 +3749,17 @@ fn update_settings_dropdown<T>(
     selected: usize,
 ) {
     let selected = selected.min(entries.len().saturating_sub(1));
-    let green: id = msg_class![env; UIColor colorWithRed:0.20 green:0.42 blue:0.26 alpha:1.0];
-    let gray: id = msg_class![env; UIColor colorWithRed:0.72 green:0.72 blue:0.74 alpha:1.0];
+    let selected_color: id =
+        msg_class![env; UIColor colorWithRed:0.16 green:0.38 blue:0.23 alpha:1.0];
+    let unselected_color: id =
+        msg_class![env; UIColor colorWithRed:0.62 green:0.63 blue:0.65 alpha:1.0];
     let white: id = msg_class![env; UIColor whiteColor];
     for (index, &item) in items.iter().enumerate() {
-        let background = if index == selected { green } else { gray };
+        let background = if index == selected {
+            selected_color
+        } else {
+            unselected_color
+        };
         () = msg![env; item setBackgroundColor:background];
         () = msg![env; item setTitleColor:white forState:UIControlStateNormal];
     }
@@ -3770,7 +3798,7 @@ fn make_graphics_api_dropdown(
     () = msg![env; button_label setAdjustsFontSizeToFitWidth:true];
     () = msg![env; button_label setMinimumFontSize:8.0];
     let white: id = msg_class![env; UIColor whiteColor];
-    let gray: id = msg_class![env; UIColor darkGrayColor];
+    let gray: id = msg_class![env; UIColor colorWithRed:0.62 green:0.63 blue:0.65 alpha:1.0];
     () = msg![env; button setTitleColor:white forState:UIControlStateNormal];
     () = msg![env; button setBackgroundColor:gray];
     () = msg![env; button setFrame:frame];
@@ -3837,7 +3865,7 @@ fn make_settings_dropdown<T>(
     () = msg![env; button_label setAdjustsFontSizeToFitWidth:true];
     () = msg![env; button_label setMinimumFontSize:8.0];
     let white: id = msg_class![env; UIColor whiteColor];
-    let gray: id = msg_class![env; UIColor darkGrayColor];
+    let gray: id = msg_class![env; UIColor colorWithRed:0.62 green:0.63 blue:0.65 alpha:1.0];
     () = msg![env; button setTitleColor:white forState:UIControlStateNormal];
     () = msg![env; button setBackgroundColor:gray];
     () = msg![env; button setFrame:button_frame];
@@ -3914,8 +3942,8 @@ fn make_ios_version_dropdown(
     let button_font = picker_font(env, 13.0 * ui_scale);
     () = msg![env; button_label setFont:button_font];
     let white: id = msg_class![env; UIColor whiteColor];
-    let dark_gray: id = msg_class![env; UIColor darkGrayColor];
-    let magenta: id = msg_class![env; UIColor greenColor];
+    let dark_gray: id = msg_class![env; UIColor colorWithRed:0.62 green:0.63 blue:0.65 alpha:1.0];
+    let magenta: id = msg_class![env; UIColor colorWithRed:0.16 green:0.38 blue:0.23 alpha:1.0];
     () = msg![env; button setTitleColor:white forState:UIControlStateNormal];
     () = msg![env; button setBackgroundColor:dark_gray];
     () = msg![env; button setFrame:button_frame];
@@ -3997,7 +4025,7 @@ fn make_device_model_dropdown(
         },
     };
 
-    let dark_gray: id = msg_class![env; UIColor darkGrayColor];
+    let dark_gray: id = msg_class![env; UIColor colorWithRed:0.62 green:0.63 blue:0.65 alpha:1.0];
 
     // Bordered container for the toggle button (a darker frame behind a lighter
     // inner button), so it reads as a control on the white menu background.

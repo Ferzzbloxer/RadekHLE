@@ -105,6 +105,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 static TRANSLATOR_TRACE_EVENTS: AtomicU32 = AtomicU32::new(0);
 static TRANSLATOR_TRACING_ENABLED: AtomicBool = AtomicBool::new(false);
 static VERBOSE_LOGGING_ENABLED: AtomicBool = AtomicBool::new(false);
+static SHADER_COMPATIBILITY_FIXES: AtomicBool = AtomicBool::new(true);
 static GL_CALL_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static ANISOTROPIC_FILTERING: AtomicU8 = AtomicU8::new(1);
 static TEXTURE_UPSCALER: AtomicU8 = AtomicU8::new(1);
@@ -159,6 +160,18 @@ pub(crate) fn configure_translator_tracing(enabled: bool, verbose: bool) {
 
 pub(crate) fn verbose_logging_enabled() -> bool {
     VERBOSE_LOGGING_ENABLED.load(Ordering::Relaxed)
+}
+
+pub(crate) fn configure_shader_compatibility_fixes(enabled: bool) {
+    SHADER_COMPATIBILITY_FIXES.store(enabled, Ordering::Relaxed);
+    log!(
+        "Native GLES shader compatibility fixes {}",
+        if enabled { "enabled" } else { "disabled" }
+    );
+}
+
+pub(crate) fn shader_compatibility_fixes_enabled() -> bool {
+    SHADER_COMPATIBILITY_FIXES.load(Ordering::Relaxed)
 }
 
 pub(crate) fn translator_tracing_enabled() -> bool {

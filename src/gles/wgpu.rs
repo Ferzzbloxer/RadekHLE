@@ -58,6 +58,12 @@ pub struct WgpuPresentation {
     previous_frame: Option<Vec<u8>>,
     offscreen_input: Option<wgpu::Texture>,
     offscreen_target: Option<wgpu::Texture>,
+    offscreen_input_view: Option<wgpu::TextureView>,
+    offscreen_target_view: Option<wgpu::TextureView>,
+    offscreen_bind_group: Option<wgpu::BindGroup>,
+    surface_input: Option<wgpu::Texture>,
+    surface_input_bind_group: Option<wgpu::BindGroup>,
+    surface_input_size: (u32, u32),
 }
 
 fn configure_surface(
@@ -404,6 +410,12 @@ impl WgpuPresentation {
             previous_frame: None,
             offscreen_input: None,
             offscreen_target: None,
+            offscreen_input_view: None,
+            offscreen_target_view: None,
+            offscreen_bind_group: None,
+            surface_input: None,
+            surface_input_bind_group: None,
+            surface_input_size: (0, 0),
         })
     }
 
@@ -457,23 +469,44 @@ impl WgpuPresentation {
             return Err("WGPU surface extent changed; retrying on the next frame".to_string());
         }
 
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("RadekHLE WGPU uploaded frame"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
+        if self.surface_input_size != (width, height) {
+            let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("RadekHLE WGPU uploaded frame"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("RadekHLE WGPU uploaded frame bindings"),
+                layout: &self.bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
+                ],
+            });
+            self.surface_input = Some(texture);
+            self.surface_input_bind_group = Some(bind_group);
+            self.surface_input_size = (width, height);
+        }
+        let texture = self.surface_input.as_ref().unwrap();
         self.queue.write_texture(
             wgpu::ImageCopyTexture {
-                texture: &texture,
+                texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
@@ -490,21 +523,7 @@ impl WgpuPresentation {
                 depth_or_array_layers: 1,
             },
         );
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("RadekHLE WGPU uploaded frame bindings"),
-            layout: &self.bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
-                },
-            ],
-        });
+        let bind_group = self.surface_input_bind_group.as_ref().unwrap();
         let output_view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -546,7 +565,7 @@ impl WgpuPresentation {
                 1.0,
             );
             pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &bind_group, &[]);
+            pass.set_bind_group(0, bind_group, &[]);
             pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             pass.draw(0..6, 0..1);
         }
@@ -591,9 +610,35 @@ impl WgpuPresentation {
                 view_formats: texture_desc.view_formats,
             }));
             self.offscreen_target = Some(self.device.create_texture(&texture_desc));
+            let input_view = self
+                .offscreen_input
+                .as_ref()
+                .unwrap()
+                .create_view(&wgpu::TextureViewDescriptor::default());
+            let target_view = self
+                .offscreen_target
+                .as_ref()
+                .unwrap()
+                .create_view(&wgpu::TextureViewDescriptor::default());
+            let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("RadekHLE WGPU offscreen frame bindings"),
+                layout: &self.bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&input_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
+                ],
+            });
+            self.offscreen_input_view = Some(input_view);
+            self.offscreen_target_view = Some(target_view);
+            self.offscreen_bind_group = Some(bind_group);
         }
         let input = self.offscreen_input.as_ref().unwrap();
-        let target = self.offscreen_target.as_ref().unwrap();
         self.queue.write_texture(
             wgpu::ImageCopyTexture {
                 texture: input,
@@ -613,22 +658,8 @@ impl WgpuPresentation {
                 depth_or_array_layers: 1,
             },
         );
-        let input_view = input.create_view(&wgpu::TextureViewDescriptor::default());
-        let target_view = target.create_view(&wgpu::TextureViewDescriptor::default());
-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("RadekHLE WGPU offscreen frame bindings"),
-            layout: &self.bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&input_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
-                },
-            ],
-        });
+        let target_view = self.offscreen_target_view.as_ref().unwrap();
+        let bind_group = self.offscreen_bind_group.as_ref().unwrap();
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -638,7 +669,7 @@ impl WgpuPresentation {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("RadekHLE WGPU offscreen frame pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &target_view,
+                    view: target_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),

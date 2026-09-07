@@ -428,6 +428,7 @@ pub struct Options {
     /// will see 0 instead of the real error. Diagnostic only.
     pub trace_gl_errors: bool,
     pub verbose_logging: bool,
+    pub shader_compatibility_fixes: bool,
     /// After a `glTexImage2D(level=0, …)` upload, if the bound texture's
     /// `GL_TEXTURE_MIN_FILTER` is still the ES 1.1 default
     /// `GL_NEAREST_MIPMAP_LINEAR` (which makes the texture incomplete
@@ -516,6 +517,7 @@ impl Default for Options {
             ignore_gl_errors: false,
             trace_gl_errors: false,
             verbose_logging: false,
+            shader_compatibility_fixes: true,
             fix_texture_min_filter: cfg!(target_os = "android"),
             software_rendering: false,
             anisotropic_filtering: 1,
@@ -877,6 +879,10 @@ impl Options {
             self.verbose_logging = true;
         } else if arg == "--disable-verbose-logging" {
             self.verbose_logging = false;
+        } else if arg == "--shader-compatibility-fixes" {
+            self.shader_compatibility_fixes = true;
+        } else if arg == "--disable-shader-compatibility-fixes" {
+            self.shader_compatibility_fixes = false;
         } else if arg == "--fix-texture-min-filter" {
             self.fix_texture_min_filter = true;
         } else if arg == "--no-fix-texture-min-filter" {
@@ -1000,5 +1006,30 @@ mod tests {
         let mut options = Options::default();
         let error = options.parse_argument("--render-rotation=45").unwrap_err();
         assert!(error.contains("render rotation"));
+    }
+
+    #[test]
+    fn parses_shader_compatibility_switch() {
+        let mut options = Options::default();
+        assert!(options.shader_compatibility_fixes);
+        options
+            .parse_argument("--disable-shader-compatibility-fixes")
+            .unwrap();
+        assert!(!options.shader_compatibility_fixes);
+        options
+            .parse_argument("--shader-compatibility-fixes")
+            .unwrap();
+        assert!(options.shader_compatibility_fixes);
+    }
+
+    #[test]
+    fn parses_texture_quality_settings() {
+        let mut options = Options::default();
+        options
+            .parse_argument("--texture-filtering=trilinear")
+            .unwrap();
+        options.parse_argument("--memory-management=light").unwrap();
+        assert_eq!(options.texture_filtering, TextureFiltering::Trilinear);
+        assert_eq!(options.memory_management, MemoryManagement::Light);
     }
 }

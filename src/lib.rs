@@ -462,6 +462,7 @@ pub fn main<T: Iterator<Item = String>>(mut args: T) -> Result<(), String> {
         }
     }
     crate::gles::configure_translator_tracing(options.trace_gl_errors, options.verbose_logging);
+    crate::gles::configure_shader_compatibility_fixes(options.shader_compatibility_fixes);
     crate::log::set_verbose_logging(options.verbose_logging);
     unsafe {
         std::env::set_var(
