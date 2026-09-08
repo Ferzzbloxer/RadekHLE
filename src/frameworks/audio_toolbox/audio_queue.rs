@@ -31,6 +31,7 @@ use crate::mem::{
 use crate::objc::msg;
 use crate::Environment;
 use std::collections::{HashMap, VecDeque};
+use std::hash::{Hash, Hasher};
 
 #[derive(Default)]
 pub struct State {
@@ -71,6 +72,7 @@ struct AudioQueueHostObject {
     is_running: AudioQueueIsRunning,
     al_source: Option<ALuint>,
     al_unused_buffers: Vec<ALuint>,
+    decoded_buffer_cache: VecDeque<DecodedAudioBuffer>,
     aq_is_running_proc: Option<AudioQueuePropertyListenerProc>,
     aq_is_running_user_data: Option<MutVoidPtr>,
     is_running_handler: bool,
@@ -90,6 +92,13 @@ struct AudioQueueHostObject {
     /// in offline-rendering mode and the caller is expected to drive playback
     /// via `AudioQueueOfflineRender`.
     offline_render_format: Option<AudioStreamBasicDescription>,
+}
+
+struct DecodedAudioBuffer {
+    key: u64,
+    format: ALenum,
+    frequency: ALsizei,
+    data: Vec<u8>,
 }
 
 /// Track whether the audio queue is meant to be running, in order to handle
@@ -240,6 +249,7 @@ pub fn AudioQueueNewOutput(
         is_running: AudioQueueIsRunning::Stopped,
         al_source: None,
         al_unused_buffers: Vec::new(),
+        decoded_buffer_cache: VecDeque::new(),
         aq_is_running_proc: None,
         aq_is_running_user_data: None,
         callbacks: 0,
@@ -500,30 +510,38 @@ pub fn AudioQueueEnqueueBuffer(
 ) -> OSStatus {
     return_if_null!(in_aq);
 
-    let host_object = match State::get(&mut env.framework_state)
-        .audio_queues
-        .get_mut(&in_aq)
-    {
-        Some(obj) => obj,
-        None => return 0,
+    let should_prime = {
+        let host_object = match State::get(&mut env.framework_state)
+            .audio_queues
+            .get_mut(&in_aq)
+        {
+            Some(obj) => obj,
+            None => return 0,
+        };
+
+        if !host_object.buffers.contains(&in_buffer) {
+            return kAudioQueueErr_InvalidBuffer;
+        }
+        if host_object.buffer_queue.contains(&in_buffer) {
+            return kAudioQueueErr_BufferInQueue;
+        }
+
+        host_object.buffer_queue.push_back(in_buffer);
+
+        log_dbg!(
+            "AudioQueueEnqueueBuffer: queue={:?} buffer={:?} guest_buffers={} queued_buffers={}",
+            in_aq,
+            in_buffer,
+            host_object.buffers.len(),
+            host_object.buffer_queue.len()
+        );
+
+        host_object.is_running == AudioQueueIsRunning::Running
     };
 
-    if !host_object.buffers.contains(&in_buffer) {
-        return kAudioQueueErr_InvalidBuffer;
+    if should_prime {
+        prime_audio_queue(env, in_aq);
     }
-    if host_object.buffer_queue.contains(&in_buffer) {
-        return kAudioQueueErr_BufferInQueue;
-    }
-
-    host_object.buffer_queue.push_back(in_buffer);
-
-    log_dbg!(
-        "AudioQueueEnqueueBuffer: queue={:?} buffer={:?} guest_buffers={} queued_buffers={}",
-        in_aq,
-        in_buffer,
-        host_object.buffers.len(),
-        host_object.buffer_queue.len()
-    );
 
     0 // success
 }
@@ -1248,6 +1266,54 @@ pub fn decode_buffer(
     }
 }
 
+fn decode_buffer_cached(
+    cache: &mut VecDeque<DecodedAudioBuffer>,
+    mem: &Mem,
+    format: &AudioStreamBasicDescription,
+    audio_data: MutPtr<u8>,
+    audio_data_byte_size: GuestUSize,
+) -> (ALenum, ALsizei, Vec<u8>) {
+    const CACHE_CAPACITY: usize = 8;
+    let bytes = mem.bytes_at(audio_data, audio_data_byte_size);
+    let format_id = format.format_id;
+    let format_flags = format.format_flags;
+    let sample_rate = format.sample_rate;
+    let channels = format.channels_per_frame;
+    let bits = format.bits_per_channel;
+    let bytes_per_frame = format.bytes_per_frame;
+    let bytes_per_packet = format.bytes_per_packet;
+    let frames_per_packet = format.frames_per_packet;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    format_id.hash(&mut hasher);
+    format_flags.hash(&mut hasher);
+    sample_rate.to_bits().hash(&mut hasher);
+    channels.hash(&mut hasher);
+    bits.hash(&mut hasher);
+    bytes_per_frame.hash(&mut hasher);
+    bytes_per_packet.hash(&mut hasher);
+    frames_per_packet.hash(&mut hasher);
+    bytes.hash(&mut hasher);
+    let key = hasher.finish();
+
+    if let Some(cached) = cache.iter().find(|cached| cached.key == key) {
+        return (cached.format, cached.frequency, cached.data.clone());
+    }
+
+    let decoded = decode_buffer(mem, format, audio_data, audio_data_byte_size);
+    if !decoded.2.is_empty() {
+        if cache.len() == CACHE_CAPACITY {
+            cache.pop_front();
+        }
+        cache.push_back(DecodedAudioBuffer {
+            key,
+            format: decoded.0,
+            frequency: decoded.1,
+            data: decoded.2.clone(),
+        });
+    }
+    decoded
+}
+
 fn frames_for_audio_bytes(format: &AudioStreamBasicDescription, bytes: usize) -> u64 {
     if format.bytes_per_frame != 0 {
         (bytes as u64) / u64::from(format.bytes_per_frame)
@@ -1259,7 +1325,7 @@ fn frames_for_audio_bytes(format: &AudioStreamBasicDescription, bytes: usize) ->
     }
 }
 
-fn apply_lower_audio_quality(
+pub(crate) fn apply_lower_audio_quality(
     al_format: ALenum,
     frequency: ALsizei,
     data: Vec<u8>,
@@ -1287,6 +1353,45 @@ fn apply_lower_audio_quality(
         reduced.extend_from_slice(frame);
     }
     ((frequency / 2).max(8_000), reduced)
+}
+
+fn fallback_al_format(format: &AudioStreamBasicDescription) -> ALenum {
+    if format.channels_per_frame == 2 {
+        match format.bits_per_channel {
+            8 => al::AL_FORMAT_STEREO8,
+            _ => al::AL_FORMAT_STEREO16,
+        }
+    } else if format.bits_per_channel == 8 {
+        al::AL_FORMAT_MONO8
+    } else {
+        al::AL_FORMAT_MONO16
+    }
+}
+
+fn silence_buffer(al_format: ALenum, frames: usize) -> Vec<u8> {
+    let bytes_per_frame = match al_format {
+        al::AL_FORMAT_MONO8 => 1,
+        al::AL_FORMAT_STEREO8 => 2,
+        al::AL_FORMAT_MONO16 => 2,
+        al::AL_FORMAT_STEREO16 => 4,
+        _ => 2,
+    };
+    vec![0; frames.saturating_mul(bytes_per_frame)]
+}
+
+fn frames_for_al_buffer(al_format: ALenum, byte_count: usize) -> u64 {
+    let bytes_per_frame = match al_format {
+        al::AL_FORMAT_MONO8 => 1,
+        al::AL_FORMAT_STEREO8 => 2,
+        al::AL_FORMAT_MONO16 => 2,
+        al::AL_FORMAT_STEREO16 => 4,
+        _ => 0,
+    };
+    if bytes_per_frame == 0 {
+        0
+    } else {
+        (byte_count / bytes_per_frame) as u64
+    }
 }
 
 fn record_audio_queue_underrun(
@@ -1458,7 +1563,8 @@ fn prime_audio_queue(env: &mut Environment, in_aq: AudioQueueRef) {
             break;
         }
 
-        let (al_format, mut al_frequency, mut data) = decode_buffer(
+        let (mut al_format, mut al_frequency, mut data) = decode_buffer_cached(
+            &mut host_object.decoded_buffer_cache,
             &env.mem,
             &host_object.format,
             next_buffer.audio_data.cast(),
@@ -1470,17 +1576,19 @@ fn prime_audio_queue(env: &mut Environment, in_aq: AudioQueueRef) {
 
         if data.is_empty() {
             record_audio_queue_underrun(host_object, in_aq, std::time::Instant::now());
-            let channels = host_object.format.channels_per_frame.clamp(1, 2) as usize;
-            let silence_frames = 1024usize;
-            data.resize(silence_frames * channels * 2, 0);
+            let silence_format = fallback_al_format(&host_object.format);
+            let silence_frames = 2048usize;
+            al_format = silence_format;
+            data = silence_buffer(silence_format, silence_frames);
             log_dbg!(
-                "AudioQueue {:?}: decoder produced no PCM; queueing {} frames of silence to keep playback alive",
+                "AudioQueue {:?}: decoder produced no PCM; queueing {} frames of format {:#x} silence to keep playback alive",
                 in_aq,
-                silence_frames
+                silence_frames,
+                silence_format
             );
         }
 
-        let supplied_frames = frames_for_audio_bytes(&host_object.format, data.len());
+        let supplied_frames = frames_for_al_buffer(al_format, data.len());
         host_object.supplied_frames = host_object.supplied_frames.saturating_add(supplied_frames);
 
         unsafe {
@@ -1577,6 +1685,16 @@ fn unqueue_buffers<F: FnMut(ALuint)>(al_source: ALuint, context: &OpenAL<'_>, mu
 }
 
 pub fn handle_audio_queue(env: &mut Environment, in_aq: AudioQueueRef) {
+    let needs_source = State::get(&mut env.framework_state)
+        .audio_queues
+        .get(&in_aq)
+        .is_some_and(|queue| {
+            queue.is_running == AudioQueueIsRunning::Running && queue.al_source.is_none()
+        });
+    if needs_source {
+        prime_audio_queue(env, in_aq);
+    }
+
     let (state, context) =
         State::get_with_context(&mut env.framework_state, &mut env.openal_manager);
 
@@ -2328,6 +2446,7 @@ pub fn AudioQueueNewInput(
         is_running: AudioQueueIsRunning::Stopped,
         al_source: None,
         al_unused_buffers: Vec::new(),
+        decoded_buffer_cache: VecDeque::new(),
         aq_is_running_proc: None,
         aq_is_running_user_data: None,
         callbacks: 0,

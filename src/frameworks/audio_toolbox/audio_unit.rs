@@ -26,7 +26,7 @@ use crate::mem::{guest_size_of, ConstVoidPtr, MutPtr, MutVoidPtr, SafeRead};
 use crate::objc::nil;
 
 use super::audio_components::{AURenderCallbackStruct, AudioComponentInstance};
-use super::audio_queue::decode_buffer;
+use super::audio_queue::{apply_lower_audio_quality, decode_buffer};
 
 const AL_POSITION: i32 = 0x1004;
 const AL_REFERENCE_DISTANCE: i32 = 0x1020;
@@ -1095,7 +1095,12 @@ fn render_audio_unit_buses(env: &mut Environment, audio_unit: AudioUnit) {
             ),
         );
 
-        let (al_fmt, _, processed) = decode_buffer(&env.mem, &fmt, buffer_data.cast(), buffer_size);
+        let (al_fmt, mut decoded_sample_rate, mut processed) =
+            decode_buffer(&env.mem, &fmt, buffer_data.cast(), buffer_size);
+        if env.options.low_audio_quality {
+            (decoded_sample_rate, processed) =
+                apply_lower_audio_quality(al_fmt, decoded_sample_rate, processed);
+        }
 
         if !processed.is_empty() {
             let context = env
@@ -1114,7 +1119,7 @@ fn render_audio_unit_buses(env: &mut Environment, audio_unit: AudioUnit) {
                     al_fmt,
                     processed.as_ptr() as *const ALvoid,
                     processed.len() as i32,
-                    fmt.sample_rate as i32,
+                    decoded_sample_rate,
                 );
                 context.SourceQueueBuffers(al_source, 1, &b);
                 let mut state = 0;
@@ -1423,8 +1428,12 @@ pub fn render_audio_unit(env: &mut Environment, audio_unit: AudioUnit) {
         }
         written
     };
-    let (al_fmt, _, processed) =
+    let (al_fmt, mut decoded_sample_rate, mut processed) =
         decode_buffer(&env.mem, &stream_format, buffer1_data.cast(), written_bytes);
+    if env.options.low_audio_quality {
+        (decoded_sample_rate, processed) =
+            apply_lower_audio_quality(al_fmt, decoded_sample_rate, processed);
+    }
     {
         let context = env
             .framework_state
@@ -1442,7 +1451,7 @@ pub fn render_audio_unit(env: &mut Environment, audio_unit: AudioUnit) {
                 al_fmt,
                 processed.as_ptr() as *const ALvoid,
                 processed.len() as i32,
-                sample_rate as i32,
+                decoded_sample_rate,
             );
             context.SourceQueueBuffers(al_source, 1, &b);
             let mut state = 0;

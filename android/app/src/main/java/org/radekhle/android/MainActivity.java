@@ -162,10 +162,7 @@ public class MainActivity extends SDLActivity {
             if (!name.toLowerCase().endsWith(".ipa")) name += ".ipa";
             File destination = new File(target, name);
             if (copyDocumentUri(uri, destination)) {
-                Log.i(TAG, "Imported game: " + name);
-                if (mSingleton != null) {
-                    mSingleton.runOnUiThread(() -> mSingleton.recreate());
-                }
+                Log.i(TAG, "Imported game: " + name + "; keeping the native app picker alive so Rust can rescan it.");
             }
         }, "RadekHLE-game-import").start();
     }

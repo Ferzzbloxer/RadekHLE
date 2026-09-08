@@ -470,7 +470,7 @@ pub fn run_run_loop(
                 Duration::ZERO
             };
         let limit = if has_audio_sources {
-            refresh_interval.min(Duration::from_millis(8))
+            refresh_interval.min(Duration::from_millis(4))
         } else {
             refresh_interval
         };
