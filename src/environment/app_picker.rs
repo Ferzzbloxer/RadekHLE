@@ -39,6 +39,7 @@ use crate::Environment;
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 struct AppInfo {
     path: PathBuf,
@@ -140,6 +141,37 @@ fn enumerate_apps(apps_dir: &Path) -> Result<Vec<AppInfo>, std::io::Error> {
     apps.sort_by_key(|app| app.display_name.to_uppercase());
     Ok(apps)
 }
+
+fn list_top_level_ipa_files(apps_dir: &Path) -> Vec<(String, u64)> {
+    let mut files = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(apps_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("ipa"))
+            {
+                let name = path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned();
+                let size = entry.metadata().map(|metadata| metadata.len()).unwrap_or(0);
+                files.push((name, size));
+            }
+        }
+    }
+    files.sort();
+    files
+}
+
+struct IpaWatch {
+    last_seen: Vec<(String, u64)>,
+    dirty: bool,
+    last_change: Option<Instant>,
+}
+
+const IPA_COPY_SETTLE_TIME: Duration = Duration::from_millis(500);
 
 const IOS_VERSION_ENTRIES: &[(&str, i32)] = &[
     ("Latest (iOS 26.6)", 0),
@@ -253,6 +285,7 @@ fn ios_version_label(value: Option<(i32, i32, i32)>) -> String {
 #[derive(Default)]
 struct AppPickerDelegateHostObject {
     icon_tapped: id,
+    add_ipa: bool,
     copyright_show: bool,
     copyright_hide: bool,
     copyright_prev: bool,
@@ -1275,6 +1308,10 @@ fn app_picker_inner(
 
     () = msg![env; window makeKeyAndVisible];
 
+    let apps_dir = paths::user_data_base_path().join(paths::APPS_DIR);
+    let mut current_page = 0;
+    let mut awaited_ipa: Option<IpaWatch> = None;
+
     let main_run_loop: id = msg_class![env; NSRunLoop mainRunLoop];
     // If an app is picked, this loop returns. If the user quits touchHLE, the
     // process exits.
@@ -1303,6 +1340,7 @@ fn app_picker_inner(
                     break app_path.clone();
                 }
                 Some(&TappedIcon::ChangePage(page_idx)) => {
+                    current_page = page_idx;
                     update_icon_grid(
                         env,
                         icon_grid_stuff.as_mut().unwrap(),
@@ -1310,11 +1348,23 @@ fn app_picker_inner(
                         page_idx,
                     );
                 }
+                Some(&TappedIcon::AddIpa) => {
+                    host_obj.add_ipa = true;
+                }
                 None => (), // Tapped on a black space
             }
             continue;
         }
-        if std::mem::take(&mut host_obj.copyright_show) {
+        if std::mem::take(&mut host_obj.add_ipa) {
+            awaited_ipa = Some(IpaWatch {
+                last_seen: list_top_level_ipa_files(&apps_dir),
+                dirty: false,
+                last_change: None,
+            });
+            if let Err(e) = crate::window::launch_ipa_picker(env) {
+                echo!("Couldn't open IPA picker: {}", e);
+            }
+        } else if std::mem::take(&mut host_obj.copyright_show) {
             copyright_info_page_idx = 0;
             change_copyright_page(
                 env,
@@ -1823,6 +1873,31 @@ fn app_picker_inner(
                 value,
             );
         }
+
+        if let Some(watch) = &mut awaited_ipa {
+            let listing = list_top_level_ipa_files(&apps_dir);
+            if listing != watch.last_seen {
+                watch.last_seen = listing;
+                watch.dirty = true;
+                watch.last_change = Some(Instant::now());
+            } else if watch.dirty
+                && watch
+                    .last_change
+                    .is_some_and(|changed| changed.elapsed() >= IPA_COPY_SETTLE_TIME)
+            {
+                if let Ok(mut new_apps) = enumerate_apps(&apps_dir) {
+                    if let Some(icon_grid) = icon_grid_stuff.as_mut() {
+                        icon_grid.pages =
+                            compute_pages(icon_grid.icon_buttons_and_labels.len(), new_apps.len());
+                        current_page = current_page.min(icon_grid.pages.len().saturating_sub(1));
+                        update_icon_grid(env, icon_grid, &mut new_apps, current_page);
+                    }
+                    apps = Ok(new_apps);
+                }
+                watch.dirty = false;
+                watch.last_change = None;
+            }
+        }
     };
 
     // Apply user-specified overrides
@@ -2130,6 +2205,7 @@ fn picker_font(env: &mut Environment, size: CGFloat) -> id {
 enum TappedIcon {
     App(usize),
     ChangePage(usize),
+    AddIpa,
 }
 
 struct IconGridStuff {
@@ -2137,6 +2213,7 @@ struct IconGridStuff {
     placeholder_icon: Option<id>,
     prev_icon: Option<id>,
     next_icon: Option<id>,
+    plus_icon: Option<id>,
     pages: Vec<std::ops::Range<usize>>,
     icon_map: HashMap<id, TappedIcon>,
 }
@@ -2243,33 +2320,39 @@ fn make_icon_grid(
     }
 
     // TODO: Use UIScrollView pagination and UIPageControl once available.
-    let mut pages = Vec::new();
-    if total_app_count == 0 {
-        pages.push(0..0);
-    }
-    let mut start = 0;
-    while start < total_app_count {
-        let mut end = start + icon_buttons_and_labels.len();
-        if start > 0 {
-            end -= 1; // one icon space taken by "previous" button
-        }
-        if end < total_app_count {
-            end -= 1; // one icon space taken by "next" button
-        } else {
-            end = total_app_count;
-        }
-        pages.push(start..end);
-        start = end;
-    }
+    let pages = compute_pages(icon_buttons_and_labels.len(), total_app_count);
 
     IconGridStuff {
         icon_buttons_and_labels,
         placeholder_icon: None,
         prev_icon: None,
         next_icon: None,
+        plus_icon: None,
         pages,
         icon_map: HashMap::new(),
     }
+}
+
+fn compute_pages(total_slots: usize, total_app_count: usize) -> Vec<std::ops::Range<usize>> {
+    if total_app_count == 0 {
+        return vec![0..0];
+    }
+
+    let mut pages = Vec::new();
+    let mut start = 0;
+    while start < total_app_count {
+        let page_idx = pages.len();
+        let reserved = usize::from(page_idx != 0) + usize::from(page_idx == 0);
+        let mut app_slots = total_slots.saturating_sub(reserved).max(1);
+        let remaining = total_app_count - start;
+        if remaining > app_slots {
+            app_slots = app_slots.saturating_sub(1).max(1);
+        }
+        let end = (start + app_slots).min(total_app_count);
+        pages.push(start..end);
+        start = end;
+    }
+    pages
 }
 
 fn make_icon_from_glyph(
@@ -2357,6 +2440,17 @@ fn update_icon_grid(
         icon_grid_stuff
             .icon_map
             .insert(icon_button, TappedIcon::ChangePage(page_idx - 1));
+    }
+    if page_idx == 0 {
+        let &(icon_button, label) = icon_iter.next().unwrap();
+        let image = *icon_grid_stuff.plus_icon.get_or_insert_with(|| {
+            make_icon_from_glyph(env, '+', 50.0, -6.0, (0.25, 0.25, 0.25, 1.0))
+        });
+        () = msg![env; icon_button setImage:image forState:UIControlStateNormal];
+        () = msg![env; label setText:(ns_string::get_static_str(env, "Add game"))];
+        icon_grid_stuff
+            .icon_map
+            .insert(icon_button, TappedIcon::AddIpa);
     }
 
     for app_idx in app_idx_range.clone() {

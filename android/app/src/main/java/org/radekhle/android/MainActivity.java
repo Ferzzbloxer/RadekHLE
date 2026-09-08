@@ -18,6 +18,8 @@ public class MainActivity extends SDLActivity {
     private static final String TAG = "RadekHLE";
     private static final int GAME_FOLDER_REQUEST = 4711;
     private static final int CUSTOM_DRIVER_REQUEST = 4712;
+    private static final int ADD_IPA_REQUEST = 4713;
+    private static final int ADD_IPA_MESSAGE = 0x8000;
 
     @Override
     protected String[] getLibraries() {
@@ -25,6 +27,30 @@ public class MainActivity extends SDLActivity {
             "SDL2",
             "radekhle"
         };
+    }
+
+    @Override
+    protected boolean onUnhandledMessage(int message, Object data) {
+        if (message == ADD_IPA_MESSAGE) {
+            runOnUiThread(MainActivity::openIpaPicker);
+            return true;
+        }
+        return super.onUnhandledMessage(message, data);
+    }
+
+    private static void openIpaPicker() {
+        if (mSingleton == null) {
+            Log.e(TAG, "Couldn't open game picker because the SDL activity is not ready");
+            return;
+        }
+        Intent picker = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        picker.setType("*/*");
+        picker.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{
+            "application/zip", "application/x-zip-compressed", "application/octet-stream"
+        });
+        picker.addCategory(Intent.CATEGORY_OPENABLE);
+        picker.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        launchFilePicker(picker, ADD_IPA_REQUEST);
     }
 
     private static File gameFolderTarget() {
@@ -124,6 +150,26 @@ public class MainActivity extends SDLActivity {
         }
     }
 
+    private static void importSelectedIpa(Uri uri) {
+        new Thread(() -> {
+            File target = gameFolderTarget();
+            if (!target.exists() && !target.mkdirs()) {
+                Log.e(TAG, "Couldn't create game folder: " + target);
+                return;
+            }
+            String name = selectedDocumentName(uri);
+            if (name == null || name.isEmpty()) name = "game.ipa";
+            if (!name.toLowerCase().endsWith(".ipa")) name += ".ipa";
+            File destination = new File(target, name);
+            if (copyDocumentUri(uri, destination)) {
+                Log.i(TAG, "Imported game: " + name);
+                if (mSingleton != null) {
+                    mSingleton.runOnUiThread(() -> mSingleton.recreate());
+                }
+            }
+        }, "RadekHLE-game-import").start();
+    }
+
     private static void importSelectedCustomDriver(Uri uri) {
         new Thread(() -> {
             File target = customDriverTarget();
@@ -200,6 +246,10 @@ public class MainActivity extends SDLActivity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        if (requestCode == ADD_IPA_REQUEST) {
+            importSelectedIpa(data.getData());
+            return;
+        }
         if (requestCode == CUSTOM_DRIVER_REQUEST) {
             importSelectedCustomDriver(data.getData());
             return;

@@ -40,8 +40,6 @@ pub fn translate_glsl_es_to_120(source: &str) -> String {
 ///
 /// - Implicit conversions from `int` to `uint` that ES allows but desktop
 ///   doesn't (rare in hand-written shaders).
-/// - The ES-only built-in `gl_FragData[]` (legacy ES 2 fallback; ES 3 apps
-///   use named `out` variables).
 ///
 /// When a guest app trips one of these, extend this function rather than
 /// patching the guest shader source.
@@ -96,6 +94,8 @@ fn translate_glsl_es_with_version(source: &str, version_directive: &'static str)
         body_lines.push(stripped);
     }
 
+    let uses_frag_data = body_lines.iter().any(|line| line.contains("gl_FragData"));
+
     // Emit version directive first.
     out.push_str(version_directive);
 
@@ -104,12 +104,17 @@ fn translate_glsl_es_with_version(source: &str, version_directive: &'static str)
         out.push_str(ext);
         out.push('\n');
     }
+    if uses_frag_data && version_directive.contains("330") {
+        out.push_str("out vec4 radekhle_FragColor;\n");
+    }
 
     // Emit body.
     for line in &body_lines {
         out.push_str(line);
         out.push('\n');
     }
+
+    out = translate_frag_data(&out, version_directive.contains("330"));
 
     // Replace texture*LodEXT calls with their desktop equivalents.
     // In GLSL 1.20 we have texture2DLod as a built-in (from GL_ARB_shader_texture_lod
@@ -121,6 +126,44 @@ fn translate_glsl_es_with_version(source: &str, version_directive: &'static str)
     }
 
     out
+}
+
+fn translate_frag_data(source: &str, glsl_330: bool) -> String {
+    if !source.contains("gl_FragData") {
+        return source.to_string();
+    }
+    let replacement = if glsl_330 {
+        "radekhle_FragColor"
+    } else {
+        "gl_FragColor"
+    };
+    let bytes = source.as_bytes();
+    let needle = b"gl_FragData";
+    let mut output = String::with_capacity(source.len());
+    let mut index = 0;
+    while index < source.len() {
+        if source[index..].starts_with("gl_FragData") {
+            let mut cursor = index + needle.len();
+            while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+                cursor += 1;
+            }
+            if cursor < bytes.len() && bytes[cursor] == b'[' {
+                let mut end = cursor + 1;
+                while end < bytes.len() && bytes[end] != b']' {
+                    end += 1;
+                }
+                if end < bytes.len() {
+                    output.push_str(replacement);
+                    index = end + 1;
+                    continue;
+                }
+            }
+        }
+        let character = source[index..].chars().next().unwrap();
+        output.push(character);
+        index += character.len_utf8();
+    }
+    output
 }
 
 /// In desktop GLSL 1.20, `texture2DLod` is available as a built-in (via

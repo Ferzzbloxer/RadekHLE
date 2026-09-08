@@ -3189,6 +3189,32 @@ pub fn open_url(env: &mut Environment, url: &str) -> Result<(), String> {
     env.on_parent_stack_in_coroutine(|_, _| sdl2::url::open_url(url).map_err(|e| e.to_string()))
 }
 
+#[cfg(target_os = "android")]
+const ADD_IPA_COMMAND: u32 = 0x8000;
+
+#[cfg(target_os = "android")]
+unsafe extern "C" {
+    fn SDL_AndroidSendMessage(command: u32, param: i32) -> i32;
+}
+
+pub fn launch_ipa_picker(env: &mut Environment) -> Result<(), String> {
+    let result = env.on_parent_stack_in_coroutine(|_, _| {
+        #[cfg(target_os = "android")]
+        {
+            unsafe { SDL_AndroidSendMessage(ADD_IPA_COMMAND, 0) }
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            -1
+        }
+    });
+    if result == 0 {
+        return Ok(());
+    }
+    let url = crate::paths::url_for_opening_apps_dir()?;
+    open_url(env, &url)
+}
+
 /// Show an SDL messagebox for an error (typically after a panic).
 ///
 /// The window argument allows for passing in the parent window for the

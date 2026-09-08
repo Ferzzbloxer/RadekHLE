@@ -1444,6 +1444,24 @@ unsafe fn guard_client_vertex_arrays(gles: &mut dyn GLES, mem: &Mem) -> Vec<GLui
     disabled
 }
 
+const VALID_DRAW_MODES: [GLenum; 7] = [0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005, 0x0006];
+
+fn draw_mode_is_valid(mode: GLenum) -> bool {
+    VALID_DRAW_MODES.contains(&mode)
+}
+
+fn warn_invalid_draw_mode(name: &str, mode: GLenum) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static WARNED: AtomicBool = AtomicBool::new(false);
+    if !WARNED.swap(true, Ordering::Relaxed) {
+        log!(
+            "Warning: skipping {} with invalid primitive mode 0x{:x}",
+            name,
+            mode
+        );
+    }
+}
+
 fn glDrawArrays(env: &mut Environment, mode: GLenum, first: GLint, count: GLsizei) {
     {
         use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -1470,6 +1488,10 @@ fn glDrawArrays(env: &mut Environment, mode: GLenum, first: GLint, count: GLsize
                 );
             }
         }
+    }
+    if !draw_mode_is_valid(mode) {
+        warn_invalid_draw_mode("glDrawArrays", mode);
+        return;
     }
     with_ctx_and_mem(env, |gles, mem| unsafe {
         let disabled_arrays = guard_client_vertex_arrays(gles, mem);
@@ -1529,6 +1551,10 @@ fn glDrawElements(
                 );
             }
         }
+    }
+    if !draw_mode_is_valid(mode) {
+        warn_invalid_draw_mode("glDrawElements", mode);
+        return;
     }
     with_ctx_and_mem(env, |gles, mem| unsafe {
         let disabled_arrays = guard_client_vertex_arrays(gles, mem);
@@ -3755,6 +3781,24 @@ fn glVertexAttrib4f(
         gles.VertexAttrib4f(index, x, y, z, w)
     });
 }
+fn glVertexAttrib2fv(env: &mut Environment, index: GLuint, values: ConstPtr<GLfloat>) {
+    let value = env.mem.read(values);
+    with_ctx_and_mem(env, |gles, _mem| unsafe {
+        gles.VertexAttrib2fv(index, &value)
+    });
+}
+fn glVertexAttrib3fv(env: &mut Environment, index: GLuint, values: ConstPtr<GLfloat>) {
+    let value = env.mem.read(values);
+    with_ctx_and_mem(env, |gles, _mem| unsafe {
+        gles.VertexAttrib3fv(index, &value)
+    });
+}
+fn glVertexAttrib4fv(env: &mut Environment, index: GLuint, values: ConstPtr<GLfloat>) {
+    let value = env.mem.read(values);
+    with_ctx_and_mem(env, |gles, _mem| unsafe {
+        gles.VertexAttrib4fv(index, &value)
+    });
+}
 fn glUniform1i(env: &mut Environment, location: GLint, v0: GLint) {
     with_ctx_and_mem(env, |gles, _mem| unsafe { gles.Uniform1i(location, v0) });
 }
@@ -5482,14 +5526,20 @@ unsafe fn clamp_fog_state_values(gles: &mut dyn GLES) -> Option<(f32, f32)> {
     }
     let mut fog_enabled: GLboolean = 0;
     gles.GetBooleanv(gles11::FOG, &mut fog_enabled);
-    if fog_enabled != 0 {
-        let mut fog_start: GLfloat = 0.0;
-        let mut fog_end: GLfloat = 0.0;
-        gles.GetFloatv(gles11::FOG_START, &mut fog_start);
-        gles.GetFloatv(gles11::FOG_END, &mut fog_end);
-        if fog_start == fog_end {
-            let new_fog_start = fog_end - 0.001;
-            gles.Fogf(gles11::FOG_START, new_fog_start);
+    if gles.GetError() != 0 {
+        return None;
+    }
+    let mut fog_start: GLfloat = 0.0;
+    let mut fog_end: GLfloat = 0.0;
+    gles.GetFloatv(gles11::FOG_START, &mut fog_start);
+    gles.GetFloatv(gles11::FOG_END, &mut fog_end);
+    if gles.GetError() != 0 {
+        return None;
+    }
+    if fog_enabled != 0 && fog_start == fog_end {
+        let new_fog_start = fog_end - 0.001;
+        gles.Fogf(gles11::FOG_START, new_fog_start);
+        if gles.GetError() == 0 {
             return Some((fog_start, fog_end));
         }
     }
@@ -5782,8 +5832,11 @@ pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(glVertexAttrib1f(_, _)),
     export_c_func!(glVertexAttrib1fv(_, _)),
     export_c_func!(glVertexAttrib2f(_, _, _)),
+    export_c_func!(glVertexAttrib2fv(_, _)),
     export_c_func!(glVertexAttrib3f(_, _, _, _)),
+    export_c_func!(glVertexAttrib3fv(_, _)),
     export_c_func!(glVertexAttrib4f(_, _, _, _, _)),
+    export_c_func!(glVertexAttrib4fv(_, _)),
     export_c_func!(glUniform1i(_, _)),
     export_c_func!(glUniform2i(_, _, _)),
     export_c_func!(glUniform3i(_, _, _, _)),

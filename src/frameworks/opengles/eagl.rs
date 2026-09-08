@@ -1000,18 +1000,16 @@ unsafe fn read_renderbuffer(gles: &mut dyn GLES, mut pixel_buffer: Vec<u8>) -> (
     // state changes we make.
     let old_framebuffer: GLuint = get_int(gles, gles11::FRAMEBUFFER_BINDING_OES) as _;
 
-    let use_bound_framebuffer = old_framebuffer != 0;
-    let mut src_framebuffer = 0;
-    if !use_bound_framebuffer {
-        gles.GenFramebuffersOES(1, &mut src_framebuffer);
-        gles.BindFramebufferOES(gles11::FRAMEBUFFER_OES, src_framebuffer);
-        gles.FramebufferRenderbufferOES(
-            gles11::FRAMEBUFFER_OES,
-            gles11::COLOR_ATTACHMENT0_OES,
-            gles11::RENDERBUFFER_OES,
-            renderbuffer,
-        );
-    }
+    let mut src_framebuffer: GLuint = 0;
+    gles.GenFramebuffersOES(1, &mut src_framebuffer);
+    gles.BindFramebufferOES(gles11::FRAMEBUFFER_OES, src_framebuffer);
+    gles.FramebufferRenderbufferOES(
+        gles11::FRAMEBUFFER_OES,
+        gles11::COLOR_ATTACHMENT0_OES,
+        gles11::RENDERBUFFER_OES,
+        renderbuffer,
+    );
+    let use_bound_framebuffer = false;
     let framebuffer_status = gles.CheckFramebufferStatusOES(gles11::FRAMEBUFFER_OES);
     if framebuffer_status != gles11::FRAMEBUFFER_COMPLETE_OES {
         log_once_fmt!(

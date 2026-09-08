@@ -98,7 +98,7 @@ struct TranslatorState {
     texture_env_mode: [GLint; MAX_TEXTURE_UNITS],
     texture_env_color: [[GLfloat; 4]; MAX_TEXTURE_UNITS],
     fixed_buffers: [Vec<GLfloat>; 3],
-    client_array_vbos: [GLuint; 7],
+    client_array_vbos: [GLuint; 10],
     client_element_vbo: GLuint,
     array_buffer_binding: GLuint,
     element_array_buffer_binding: GLuint,
@@ -172,7 +172,7 @@ impl TranslatorState {
             texture_env_mode: [es1::MODULATE as GLint; MAX_TEXTURE_UNITS],
             texture_env_color: [[0.0, 0.0, 0.0, 0.0]; MAX_TEXTURE_UNITS],
             fixed_buffers: std::array::from_fn(|_| Vec::new()),
-            client_array_vbos: [0; 7],
+            client_array_vbos: [0; 10],
             client_element_vbo: 0,
             array_buffer_binding: 0,
             element_array_buffer_binding: 0,
@@ -1488,6 +1488,7 @@ impl GLES for GLES1OnGLES2<'_> {
     }
     unsafe fn GetVertexAttribiv(&mut self, index: GLuint, pname: GLenum, params: *mut GLint) {
         gl::GetVertexAttribiv(index, pname, params);
+        let _ = gl::GetError();
     }
     unsafe fn GetVertexAttribfv(&mut self, index: GLuint, pname: GLenum, params: *mut GLfloat) {
         gl::GetVertexAttribfv(index, pname, params);
