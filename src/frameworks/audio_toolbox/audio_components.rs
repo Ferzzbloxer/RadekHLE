@@ -16,8 +16,8 @@ use crate::environment::Environment;
 use crate::export_c_func;
 use crate::frameworks::carbon_core::{paramErr, OSStatus};
 use crate::frameworks::core_audio_types::{
-    fourcc, kAudioFormatFlagIsAlignedHigh, kAudioFormatFlagIsFloat, kAudioFormatFlagIsPacked,
-    kAudioFormatFlagIsSignedInteger, kAudioFormatLinearPCM, AudioStreamBasicDescription,
+    fourcc, kAudioFormatFlagIsFloat, kAudioFormatFlagIsPacked, kAudioFormatLinearPCM,
+    AudioStreamBasicDescription,
 };
 use crate::mem::{ConstPtr, ConstVoidPtr, MutPtr, SafeRead};
 
@@ -125,13 +125,10 @@ impl Default for AudioComponentInstanceHostObject {
             global_stream_format: AudioStreamBasicDescription {
                 sample_rate: 44100.0,
                 format_id: kAudioFormatLinearPCM,
-                format_flags: kAudioFormatFlagIsFloat
-                    | kAudioFormatFlagIsSignedInteger
-                    | kAudioFormatFlagIsPacked
-                    | kAudioFormatFlagIsAlignedHigh,
-                bytes_per_packet: 4,
+                format_flags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
+                bytes_per_packet: 8,
                 frames_per_packet: 1,
-                bytes_per_frame: 4,
+                bytes_per_frame: 8,
                 channels_per_frame: 2,
                 bits_per_channel: 32,
                 _reserved: 0,

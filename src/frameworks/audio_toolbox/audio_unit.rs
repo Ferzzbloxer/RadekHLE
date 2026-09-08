@@ -19,7 +19,9 @@ use crate::export_c_func;
 use crate::frameworks::audio_toolbox::audio_components;
 use crate::frameworks::audio_toolbox::audio_queue::log_if_broken_audio_format;
 use crate::frameworks::carbon_core::{paramErr, OSStatus};
-use crate::frameworks::core_audio_types::{fourcc, AudioStreamBasicDescription};
+use crate::frameworks::core_audio_types::{
+    fourcc, kAudioFormatFlagIsNonInterleaved, AudioStreamBasicDescription,
+};
 use crate::frameworks::core_foundation::cf_run_loop::CFRunLoopGetMain;
 use crate::frameworks::foundation::ns_run_loop;
 use crate::mem::{guest_size_of, ConstVoidPtr, MutPtr, MutVoidPtr, SafeRead};
@@ -32,6 +34,68 @@ const AL_POSITION: i32 = 0x1004;
 const AL_REFERENCE_DISTANCE: i32 = 0x1020;
 const AL_ROLLOFF_FACTOR: i32 = 0x1021;
 const AL_MAX_DISTANCE: i32 = 0x1023;
+
+fn audio_format_is_non_interleaved(format: &AudioStreamBasicDescription) -> bool {
+    (format.format_flags & kAudioFormatFlagIsNonInterleaved) != 0
+}
+
+fn audio_bytes_per_sample(format: &AudioStreamBasicDescription) -> u32 {
+    (format.bits_per_channel / 8).max(1)
+}
+
+fn audio_bytes_per_frame(format: &AudioStreamBasicDescription) -> u32 {
+    if audio_format_is_non_interleaved(format) {
+        audio_bytes_per_sample(format)
+    } else {
+        format
+            .bytes_per_frame
+            .max(audio_bytes_per_sample(format).saturating_mul(format.channels_per_frame.max(1)))
+    }
+}
+
+fn render_quantum_frames(sample_rate: f64, io_buffer_duration: f32, maximum_frames: u32) -> u32 {
+    let nominal = if sample_rate.is_finite() && sample_rate > 0.0 && io_buffer_duration.is_finite()
+    {
+        (sample_rate * f64::from(io_buffer_duration)).round() as u32
+    } else {
+        1024
+    };
+    let maximum_frames = maximum_frames.clamp(256, 4096);
+    nominal.clamp(256, maximum_frames)
+}
+
+fn interleave_planar_buffers(
+    env: &mut Environment,
+    first: MutVoidPtr,
+    first_size: u32,
+    second: MutVoidPtr,
+    second_size: u32,
+    bytes_per_sample: u32,
+) -> Option<(MutPtr<u8>, u32)> {
+    let bytes_per_sample = usize::try_from(bytes_per_sample).ok()?;
+    if bytes_per_sample == 0 {
+        return None;
+    }
+    let first_bytes = env.mem.bytes_at(first.cast(), first_size).to_vec();
+    let second_bytes = env.mem.bytes_at(second.cast(), second_size).to_vec();
+    let sample_count =
+        (first_bytes.len() / bytes_per_sample).min(second_bytes.len() / bytes_per_sample);
+    if sample_count == 0 {
+        return None;
+    }
+    let output_size = sample_count.checked_mul(bytes_per_sample)?.checked_mul(2)?;
+    let output = env.mem.alloc(output_size as u32);
+    let output_bytes = env.mem.bytes_at_mut(output.cast(), output_size as u32);
+    for sample in 0..sample_count {
+        let src_start = sample * bytes_per_sample;
+        let dst_start = sample * bytes_per_sample * 2;
+        output_bytes[dst_start..dst_start + bytes_per_sample]
+            .copy_from_slice(&first_bytes[src_start..src_start + bytes_per_sample]);
+        output_bytes[dst_start + bytes_per_sample..dst_start + bytes_per_sample * 2]
+            .copy_from_slice(&second_bytes[src_start..src_start + bytes_per_sample]);
+    }
+    Some((output.cast(), output_size as u32))
+}
 
 fn create_audio_source(context: &OpenAL<'_>) -> Option<ALuint> {
     let mut source = 0;
@@ -755,7 +819,7 @@ pub fn setup_audio_unit_for_render(env: &mut Environment, ci: AudioUnit) {
         let Some(obj) = state.audio_component_instances.get(&ci) else {
             return;
         };
-        obj.al_source.is_none()
+        obj.al_source.is_none() && obj.render_callback.is_some()
     };
 
     let context = env
@@ -989,7 +1053,7 @@ fn render_audio_unit_buses(env: &mut Environment, audio_unit: AudioUnit) {
     );
 
     let now = Instant::now();
-    for (bus_id, callback, al_source, last_render_time, fmt) in plan {
+    for (bus_id, callback, al_source, _last_render_time, fmt) in plan {
         // Ограничиваем глубину очереди OpenAL, чтобы буферы не накапливались
         // быстрее, чем воспроизводятся. Если этого не делать, при длительной
         // игре источник набирает всё больше необработанных буферов, звук
@@ -1041,9 +1105,15 @@ fn render_audio_unit_buses(env: &mut Environment, audio_unit: AudioUnit) {
             continue;
         }
 
-        let elapsed = now.duration_since(last_render_time);
-        let frames = ((elapsed.as_secs_f64() * fmt.sample_rate) as u32).clamp(64, 4096);
-        let buffer_size = frames * fmt.channels_per_frame * (fmt.bits_per_channel / 8);
+        let frames = render_quantum_frames(
+            fmt.sample_rate,
+            env.framework_state
+                .audio_toolbox
+                .audio_session
+                .current_hardware_io_buffer_duration,
+            1024,
+        );
+        let buffer_size = frames * audio_bytes_per_frame(&fmt);
         if buffer_size == 0 {
             continue;
         }
@@ -1177,10 +1247,11 @@ pub fn render_audio_unit(env: &mut Environment, audio_unit: AudioUnit) {
         started,
         is_running,
         stream_format,
-        has_input_format,
+        maximum_frames_per_slice,
         al_source,
         last_render_time,
         callback,
+        input_format_was_set,
     ) = {
         let at = &mut env.framework_state.audio_toolbox;
         let Some(obj) = at
@@ -1199,10 +1270,11 @@ pub fn render_audio_unit(env: &mut Environment, audio_unit: AudioUnit) {
             obj.is_running_handler,
             obj.input_stream_format
                 .unwrap_or(obj.output_stream_format.unwrap_or(obj.global_stream_format)),
-            obj.input_stream_format.is_some(),
+            obj.maximum_frames_per_slice,
             obj.al_source,
             obj.last_render_time,
             obj.render_callback,
+            obj.input_stream_format.is_some(),
         )
     };
 
@@ -1335,25 +1407,34 @@ pub fn render_audio_unit(env: &mut Environment, audio_unit: AudioUnit) {
         }
     }
 
-    let target_frames = (sample_rate
-        * env
-            .framework_state
+    let frames = render_quantum_frames(
+        sample_rate,
+        env.framework_state
             .audio_toolbox
             .audio_session
-            .current_hardware_io_buffer_duration as f64)
-        .round() as u32;
-    let frames = target_frames.clamp(64, 2048);
-    let buffer_size =
-        frames * stream_format.channels_per_frame * (stream_format.bits_per_channel / 8);
+            .current_hardware_io_buffer_duration,
+        maximum_frames_per_slice,
+    );
+    let buffer_size = frames * audio_bytes_per_frame(&stream_format);
 
     let action_flags = env.mem.alloc_and_write(0u32);
 
     // Восстанавливаем логику из оригинала: Resident Evil 4 ожидает 2 буфера
+    let planar_output =
+        audio_format_is_non_interleaved(&stream_format) && stream_format.channels_per_frame > 1;
+    let plane_buffer_size = frames * audio_bytes_per_sample(&stream_format);
+    let callback_buffer_size = if planar_output {
+        plane_buffer_size
+    } else {
+        buffer_size
+    };
+    let has_input_format = input_format_was_set;
+    let two_buffer_output = !has_input_format || planar_output;
     let (audio_buffer_list, buffer1_data, buffer2_data): (
         MutVoidPtr,
         MutVoidPtr,
         Option<MutVoidPtr>,
-    ) = if has_input_format {
+    ) = if !two_buffer_output {
         let buf = env.mem.alloc(buffer_size);
         let abl = env.mem.alloc_and_write(AudioBufferList::<1> {
             number_buffers: 1,
@@ -1365,19 +1446,27 @@ pub fn render_audio_unit(env: &mut Environment, audio_unit: AudioUnit) {
         });
         (abl.cast(), buf, None)
     } else {
-        let buf1 = env.mem.alloc(buffer_size);
-        let buf2 = env.mem.alloc(buffer_size);
+        let buf1 = env.mem.alloc(callback_buffer_size);
+        let buf2 = env.mem.alloc(callback_buffer_size);
         let abl = env.mem.alloc_and_write(AudioBufferList::<2> {
             number_buffers: 2,
             buffers: [
                 AudioBuffer {
-                    number_channels: stream_format.channels_per_frame,
-                    data_byte_size: buffer_size,
+                    number_channels: if planar_output {
+                        1
+                    } else {
+                        stream_format.channels_per_frame
+                    },
+                    data_byte_size: callback_buffer_size,
                     data: buf1,
                 },
                 AudioBuffer {
-                    number_channels: stream_format.channels_per_frame,
-                    data_byte_size: buffer_size,
+                    number_channels: if planar_output {
+                        1
+                    } else {
+                        stream_format.channels_per_frame
+                    },
+                    data_byte_size: callback_buffer_size,
                     data: buf2,
                 },
             ],
@@ -1400,21 +1489,46 @@ pub fn render_audio_unit(env: &mut Environment, audio_unit: AudioUnit) {
         ),
     );
 
-    let written_bytes = {
-        let list = if has_input_format {
-            let list = env
-                .mem
-                .read::<AudioBufferList<1>, true>(audio_buffer_list.cast());
-            list.buffers[0]
-        } else {
-            let list = env
-                .mem
-                .read::<AudioBufferList<2>, true>(audio_buffer_list.cast());
-            list.buffers[0]
-        };
-        let channels = list.number_channels;
-        let bytes_per_frame = stream_format.bytes_per_frame;
-        let written = list.data_byte_size.min(buffer_size);
+    let (decode_ptr, written_bytes, interleaved_ptr, decode_format) = if planar_output {
+        let list = env
+            .mem
+            .read::<AudioBufferList<2>, true>(audio_buffer_list.cast());
+        let first = list.buffers[0];
+        let second = list.buffers[1];
+        let first_size = first.data_byte_size.min(plane_buffer_size);
+        let second_size = second.data_byte_size.min(plane_buffer_size);
+        match interleave_planar_buffers(
+            env,
+            first.data,
+            first_size,
+            second.data,
+            second_size,
+            audio_bytes_per_sample(&stream_format),
+        ) {
+            Some((ptr, size)) => {
+                let mut format = stream_format;
+                format.format_flags &= !kAudioFormatFlagIsNonInterleaved;
+                format.bytes_per_frame =
+                    audio_bytes_per_sample(&stream_format) * stream_format.channels_per_frame;
+                format.bytes_per_packet = format.bytes_per_frame * format.frames_per_packet.max(1);
+                (ptr.cast(), size, Some(ptr), format)
+            }
+            None => {
+                let mut format = stream_format;
+                format.channels_per_frame = 1;
+                format.bytes_per_frame = audio_bytes_per_sample(&stream_format);
+                format.bytes_per_packet = format.bytes_per_frame * format.frames_per_packet.max(1);
+                (first.data, first_size, None, format)
+            }
+        }
+    } else if two_buffer_output {
+        let list = env
+            .mem
+            .read::<AudioBufferList<2>, true>(audio_buffer_list.cast());
+        let buffer = list.buffers[0];
+        let number_channels = buffer.number_channels;
+        let format_bytes_per_frame = stream_format.bytes_per_frame;
+        let written = buffer.data_byte_size.min(buffer_size);
         if written == 0 {
             log_dbg!(
                 "AudioUnit render callback returned no data: unit={:?} frames={} requested_bytes={} sample_rate={} channels={} bytes_per_frame={}",
@@ -1422,14 +1536,38 @@ pub fn render_audio_unit(env: &mut Environment, audio_unit: AudioUnit) {
                 frames,
                 buffer_size,
                 sample_rate,
-                channels,
-                bytes_per_frame,
+                number_channels,
+                format_bytes_per_frame,
             );
         }
-        written
+        (buffer.data, written, None, stream_format)
+    } else {
+        let list = env
+            .mem
+            .read::<AudioBufferList<1>, true>(audio_buffer_list.cast());
+        let buffer = list.buffers[0];
+        let number_channels = buffer.number_channels;
+        let format_bytes_per_frame = stream_format.bytes_per_frame;
+        let written = buffer.data_byte_size.min(buffer_size);
+        if written == 0 {
+            log_dbg!(
+                "AudioUnit render callback returned no data: unit={:?} frames={} requested_bytes={} sample_rate={} channels={} bytes_per_frame={}",
+                audio_unit,
+                frames,
+                buffer_size,
+                sample_rate,
+                number_channels,
+                format_bytes_per_frame,
+            );
+        }
+        (buffer.data, written, None, stream_format)
     };
+
     let (al_fmt, mut decoded_sample_rate, mut processed) =
-        decode_buffer(&env.mem, &stream_format, buffer1_data.cast(), written_bytes);
+        decode_buffer(&env.mem, &decode_format, decode_ptr.cast(), written_bytes);
+    if let Some(ptr) = interleaved_ptr {
+        env.mem.free(ptr.cast_void());
+    }
     if env.options.low_audio_quality {
         (decoded_sample_rate, processed) =
             apply_lower_audio_quality(al_fmt, decoded_sample_rate, processed);
