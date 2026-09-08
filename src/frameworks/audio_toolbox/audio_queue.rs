@@ -18,7 +18,7 @@ use crate::frameworks::carbon_core::OSStatus;
 use crate::frameworks::core_audio_types::{
     debug_fourcc, fourcc, kAudioFormatAppleIMA4, kAudioFormatFlagIsBigEndian,
     kAudioFormatFlagIsFloat, kAudioFormatFlagIsPacked, kAudioFormatLinearPCM, kAudioFormatMPEG4AAC,
-    kAudioFormatMPEGLayer3, AudioStreamBasicDescription,
+    kAudioFormatMPEGLayer3, AudioStreamBasicDescription, AudioTimeStamp,
 };
 use crate::frameworks::core_foundation::cf_run_loop::{
     kCFRunLoopCommonModes, CFRunLoopGetMain, CFRunLoopMode, CFRunLoopRef,
@@ -552,7 +552,24 @@ fn AudioQueueEnqueueBufferWithParameters(
     in_buffer: AudioQueueBufferRef,
     in_num_packet_descs: u32,
     in_packet_descs: MutVoidPtr,
+    in_trim_frames_at_start: u32,
+    in_trim_frames_at_end: u32,
+    in_num_param_values: u32,
+    in_param_values: MutVoidPtr,
+    in_start_time: ConstPtr<AudioTimeStamp>,
+    out_actual_start_time: MutPtr<AudioTimeStamp>,
 ) -> OSStatus {
+    if in_trim_frames_at_start != 0
+        || in_trim_frames_at_end != 0
+        || in_num_param_values != 0
+        || !in_param_values.is_null()
+        || !in_start_time.is_null()
+        || !out_actual_start_time.is_null()
+    {
+        log!(
+            "AudioQueueEnqueueBufferWithParameters: ignoring optional trim, parameter, and start-time arguments"
+        );
+    }
     AudioQueueEnqueueBuffer(env, in_aq, in_buffer, in_num_packet_descs, in_packet_descs)
 }
 
@@ -2482,7 +2499,18 @@ pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(AudioQueueAllocateBufferWithPacketDescriptions(_, _, _, _)),
     export_c_func!(AudioQueueAllocateBuffer(_, _, _)),
     export_c_func!(AudioQueueEnqueueBuffer(_, _, _, _)),
-    export_c_func!(AudioQueueEnqueueBufferWithParameters(_, _, _, _)),
+    export_c_func!(AudioQueueEnqueueBufferWithParameters(
+        _,
+        _,
+        _,
+        _,
+        _,
+        _,
+        _,
+        _,
+        _,
+        _
+    )),
     export_c_func!(AudioQueueAddPropertyListener(_, _, _, _)),
     export_c_func!(AudioQueueRemovePropertyListener(_, _, _, _)),
     export_c_func!(AudioQueueGetPropertySize(_, _, _)),
