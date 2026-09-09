@@ -69,6 +69,13 @@ jobs:
           curl -sSL -o gradle.zip https://services.gradle.org/distributions/gradle-8.11.1-bin.zip
           unzip -q gradle.zip -d /opt
           echo "/opt/gradle-8.11.1/bin" >> $GITHUB_PATH
+
+      - name: Write local.properties
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > android/local.properties
+          echo "ndk.dir=$ANDROID_NDK_HOME" >> android/local.properties
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
       
       - name: Build APK
         env:
