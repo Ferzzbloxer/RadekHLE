@@ -1,0 +1,83 @@
+name: Build RadekHLE with bundled game
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Sanity-check game asset is present
+        run: |
+          if [ ! -f "game_asset/game.ipa" ]; then
+            echo "::error::game_asset/game.ipa is missing. Add your .ipa there before running this workflow."
+            exit 1
+          fi
+          ls -lh game_asset/game.ipa
+
+      - name: Copy game into Android assets
+        run: |
+          mkdir -p android/app/src/main/assets
+          cp game_asset/game.ipa android/app/src/main/assets/game.ipa
+
+      # NOTE: adjust this path if RadekHLE's actual project layout differs -
+      # I have not verified this against their real source tree.
+      - name: Ensure .ipa is not re-compressed by aapt
+        run: |
+          GRADLE_FILE="android/app/build.gradle"
+          if [ -f "$GRADLE_FILE" ] && ! grep -q 'noCompress "ipa"' "$GRADLE_FILE"; then
+            python3 patches/add_no_compress.py "$GRADLE_FILE"
+          fi
+
+      - name: Patch MainActivity to seed the bundled game on first launch
+        run: |
+          python3 patches/seed_bundled_app.py \
+            android/app/src/main/java/org/radekhle/android/MainActivity.java
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk
+
+      - name: Set up Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r26d
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      # NOTE: RadekHLE (like touchHLE) is a Rust core wrapped by a Gradle/
+      # Android project. If their real build uses a different Gradle task,
+      # or needs the native lib built via a separate `cargo ndk` step before
+      # Gradle runs, replace this block with whatever their dev-docs specify.
+      - name: Build APK
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          cd android
+          chmod +x ./gradlew
+          ./gradlew assembleRelease --stacktrace
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: radekhle-with-game
+          path: android/app/build/outputs/apk/release/*.apk
