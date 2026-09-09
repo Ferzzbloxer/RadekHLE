@@ -1733,6 +1733,20 @@ pub fn handle_audio_queue(env: &mut Environment, in_aq: AudioQueueRef) {
         prime_audio_queue(env, in_aq);
     }
 
+    let retry_empty_startup_buffers = State::get(&mut env.framework_state)
+        .audio_queues
+        .get(&in_aq)
+        .is_some_and(|queue| {
+            queue.is_running == AudioQueueIsRunning::Running && queue.buffer_queue.is_empty()
+        });
+    if retry_empty_startup_buffers {
+        // Some older games allocate their buffers before the decoder has
+        // produced the first packet. Asking the callback again on the next
+        // run-loop tick matches Audio Queue Services' refill behaviour and
+        // prevents a one-time empty callback from permanently silencing music.
+        ensure_output_buffers(env, in_aq);
+    }
+
     let (state, context) =
         State::get_with_context(&mut env.framework_state, &mut env.openal_manager);
 

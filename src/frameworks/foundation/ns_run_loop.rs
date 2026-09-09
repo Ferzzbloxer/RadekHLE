@@ -459,7 +459,11 @@ pub fn run_run_loop(
             Duration::ZERO
         };
         let limit = if has_audio_sources {
-            refresh_interval.min(Duration::from_millis(4))
+            // Keep audio callbacks ahead of the host mixer instead of tying
+            // their refill cadence to the display frame rate. This matters
+            // on fast displays where a busy render frame can otherwise drain
+            // the short OpenAL queue before the next guest callback runs.
+            refresh_interval.min(Duration::from_millis(2))
         } else {
             refresh_interval
         };

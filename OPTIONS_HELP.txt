@@ -8,6 +8,13 @@ View options:
         in use, the result may be a bit blurry. An internal resolution larger
         than your screen's is possible, in which case the output is downscaled.
 
+    --fullscreen-stretched / --disable-fullscreen-stretched
+        Fill the entire host display with the rendered image without preserving
+        the emulated device aspect ratio. This is a presentation-only choice:
+        it does not change the guest's orientation, screen size, or touch model.
+        When enabled, final render rotations and axis mirrors are bypassed so
+        the source image is stretched directly into the display.
+
     --landscape-left
     --landscape-right
     --upside-down
@@ -103,6 +110,11 @@ Device options:
     --force-32-bit
         Prefer the 32-bit ARM loader when the selected application includes a
         compatible ARM32 slice. An ARM64-only executable cannot be run as 32-bit.
+
+    --metal-translator / --disable-metal-translator
+        Enable the ARM64 GLES translator path. It is enabled by default because
+        it is the compatibility path used by the ARM64 renderer; disable it only
+        when testing a direct GLES2 path.
 
 
 Game controller options:

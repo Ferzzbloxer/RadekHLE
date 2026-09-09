@@ -113,7 +113,7 @@ fn update_hud_text() {
         .unwrap_or_default();
     let cpu = metrics
         .cpu_percent
-        .map_or_else(|| "--".to_owned(), |value| format!("{value:.0}"));
+        .map_or_else(|| "0".to_owned(), |value| format!("{value:.0}"));
     let gpu = metrics
         .gpu_percent
         .map_or_else(|| "--".to_owned(), |value| format!("{value:.0}"));
@@ -134,36 +134,62 @@ fn update_hud_text() {
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn process_cpu_percent() -> Option<f32> {
-    static SAMPLE: OnceLock<Mutex<Option<(u64, u64)>>> = OnceLock::new();
-    let stat = std::fs::read_to_string("/proc/self/stat").ok()?;
-    let fields = stat
-        .rsplit_once(") ")?
-        .1
-        .split_whitespace()
-        .collect::<Vec<_>>();
-    let process_ticks = fields
-        .get(11)?
-        .parse::<u64>()
-        .ok()?
-        .checked_add(fields.get(12)?.parse::<u64>().ok()?)?;
-    let total_ticks = std::fs::read_to_string("/proc/stat")
-        .ok()?
-        .lines()
-        .find(|line| line.starts_with("cpu "))?
-        .split_whitespace()
-        .skip(1)
-        .filter_map(|value| value.parse::<u64>().ok())
-        .sum::<u64>();
+    use std::time::Instant;
+
+    static SAMPLE: OnceLock<Mutex<Option<(u64, Instant)>>> = OnceLock::new();
+
+    fn process_time_ns() -> Option<u64> {
+        let ticks_per_second = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+        if ticks_per_second > 0 {
+            if let Ok(stat) = std::fs::read_to_string("/proc/self/stat") {
+                if let Some(rest) = stat.rsplit_once(") ").map(|(_, rest)| rest) {
+                    let fields = rest.split_whitespace().collect::<Vec<_>>();
+                    if let (Some(user), Some(system)) = (fields.get(11), fields.get(12)) {
+                        if let (Ok(user), Ok(system)) = (user.parse::<u64>(), system.parse::<u64>())
+                        {
+                            let ticks = user.saturating_add(system);
+                            return Some(
+                                ticks.saturating_mul(1_000_000_000) / ticks_per_second as u64,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
+        if unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) } != 0 {
+            return None;
+        }
+        let usage = unsafe { usage.assume_init() };
+        Some(
+            (usage.ru_utime.tv_sec as u64)
+                .saturating_mul(1_000_000_000)
+                .saturating_add((usage.ru_utime.tv_usec as u64).saturating_mul(1_000))
+                .saturating_add((usage.ru_stime.tv_sec as u64).saturating_mul(1_000_000_000))
+                .saturating_add((usage.ru_stime.tv_usec as u64).saturating_mul(1_000)),
+        )
+    }
+
+    let process_time = process_time_ns()?;
+    let now = Instant::now();
     let mutex = SAMPLE.get_or_init(|| Mutex::new(None));
     let mut previous = mutex.lock().ok()?;
-    let result = previous.take().and_then(|(old_process, old_total)| {
-        let process_delta = process_ticks.saturating_sub(old_process);
-        let total_delta = total_ticks.saturating_sub(old_total);
-        (total_delta > 0)
-            .then(|| (process_delta as f32 / total_delta as f32 * 100.0).clamp(0.0, 100.0))
-    });
-    *previous = Some((process_ticks, total_ticks));
-    result
+    let result = previous
+        .take()
+        .map(|(old_process, old_time)| {
+            let wall_ns = now.duration_since(old_time).as_nanos() as f32;
+            let process_ns = process_time.saturating_sub(old_process) as f32;
+            let cores = std::thread::available_parallelism().map_or(1, |value| value.get()) as f32;
+            if wall_ns > 0.0 {
+                (process_ns / wall_ns * 100.0 / cores).clamp(0.0, 100.0)
+            } else {
+                0.0
+            }
+        })
+        .unwrap_or(0.0);
+    *previous = Some((process_time, now));
+    Some(result)
 }
 
 #[cfg(target_os = "windows")]

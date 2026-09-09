@@ -325,6 +325,7 @@ struct AppPickerDelegateHostObject {
     ultra_battery_saver: Option<bool>,
     frame_generation: Option<bool>,
     fullscreen: Option<bool>,
+    fullscreen_stretched: Option<bool>,
     angle_driver: Option<bool>,
     log_file: Option<bool>,
     trace_gl_errors: Option<bool>,
@@ -549,6 +550,10 @@ const CLASSES: ClassExports = objc_classes! {
 - (())fullscreen:(id)switch { // UISwitch*
     let switch_state: bool = msg![env; switch isOn];
     env.objc.borrow_mut::<AppPickerDelegateHostObject>(this).fullscreen = Some(switch_state);
+}
+- (())fullscreenStretched:(id)switch { // UISwitch*
+    let switch_state: bool = msg![env; switch isOn];
+    env.objc.borrow_mut::<AppPickerDelegateHostObject>(this).fullscreen_stretched = Some(switch_state);
 }
 - (())angleDriver:(id)switch { // UISwitch*
     let switch_state: bool = msg![env; switch isOn];
@@ -1048,6 +1053,7 @@ fn app_picker_inner(
     let mut quick_options_scale_hack: Option<f32> = None;
     let mut quick_options_custom_resolution: Option<(u32, u32)> = None;
     let mut quick_options_fullscreen: Option<()> = None;
+    let mut quick_options_fullscreen_stretched = false;
     let mut quick_options_orientation: Option<DeviceOrientation> = None;
     let mut quick_options_render_rotation: Option<RenderRotation> = None;
     let mut quick_options_revert_x_axis = false;
@@ -1086,7 +1092,7 @@ fn app_picker_inner(
     let mut quick_options_arm64_backend = crate::options::Arm64Backend::Interpreter;
     let mut quick_options_arm64_fallback = crate::options::Arm64Fallback::Interpreter;
     let mut quick_options_llvmpipe_fallback = false;
-    let mut quick_options_metal_translator = false;
+    let mut quick_options_metal_translator = true;
     let mut quick_options_software_rendering = false;
     let mut quick_options_custom_driver = false;
     let mut quick_options_anisotropic_filtering = 1u8;
@@ -1828,6 +1834,8 @@ fn app_picker_inner(
                 false => None,
                 true => Some(()),
             };
+        } else if let Some(enabled) = std::mem::take(&mut host_obj.fullscreen_stretched) {
+            quick_options_fullscreen_stretched = enabled;
         } else if let Some(enabled) = std::mem::take(&mut host_obj.llvmpipe_fallback) {
             quick_options_llvmpipe_fallback = enabled;
         } else if let Some(enabled) = std::mem::take(&mut host_obj.metal_translator) {
@@ -1955,6 +1963,14 @@ fn app_picker_inner(
     if let Some(()) = quick_options_fullscreen {
         option_args.push("--fullscreen".to_string());
     }
+    option_args.push(
+        if quick_options_fullscreen_stretched {
+            "--fullscreen-stretched"
+        } else {
+            "--disable-fullscreen-stretched"
+        }
+        .to_string(),
+    );
     if !quick_options_analog_stick_tilt_controls {
         option_args.push("--disable-analog-stick-tilt-controls".to_string());
     }
@@ -3204,7 +3220,7 @@ fn setup_quick_options(
         RowKind::Switch("noTextureCompression:", false),
         RowKind::Label("Battery saver"),
         RowKind::Switch("batterySaver:", false),
-        RowKind::Label("Ultra battery saver (10 FPS)"),
+        RowKind::Label("Ultra battery saver"),
         RowKind::Switch("ultraBatterySaver:", false),
         RowKind::Label("Memory management"),
         RowKind::MemoryManagementDropdown,
@@ -3215,7 +3231,7 @@ fn setup_quick_options(
         RowKind::Label("LLVMPipe fallback"),
         RowKind::Switch("llvmpipeFallback:", false),
         RowKind::Label("Metal translator (ARM64)"),
-        RowKind::Switch("metalTranslator:", false),
+        RowKind::Switch("metalTranslator:", true),
         RowKind::Label("Game folder"),
         RowKind::Buttons(&[
             ("Open folder", "openFileManager"),
@@ -3252,6 +3268,8 @@ fn setup_quick_options(
         RowKind::Switch("revertXAxis:", false),
         RowKind::Label("Revert Y axis"),
         RowKind::Switch("revertYAxis:", false),
+        RowKind::Label("Fullscreen (stretched)"),
+        RowKind::Switch("fullscreenStretched:", false),
         RowKind::Label("Device model"),
         RowKind::DeviceDropdown,
         RowKind::Label("Network access"),

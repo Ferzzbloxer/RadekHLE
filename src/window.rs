@@ -1154,6 +1154,7 @@ pub struct Window {
     /// Copy of `fullscreen` on [Options]. Note that this is meaningless when
     /// [Self::rotatable_fullscreen] returns [true].
     fullscreen: bool,
+    fullscreen_stretched: bool,
     scale_hack: f32,
     host_screen_size: Option<(u32, u32)>,
     software_presentation: bool,
@@ -1330,7 +1331,8 @@ impl Window {
         let render_rotation = options.render_rotation;
         let revert_x_axis = options.revert_x_axis;
         let revert_y_axis = options.revert_y_axis;
-        let fullscreen = options.fullscreen;
+        let fullscreen_stretched = options.fullscreen_stretched;
+        let fullscreen = options.fullscreen || fullscreen_stretched;
         let portrait_screen_size =
             host_screen_size.unwrap_or_else(|| device_family.portrait_size());
 
@@ -1414,6 +1416,7 @@ impl Window {
             #[cfg(target_os = "macos")]
             viewport_y_offset: 0,
             fullscreen,
+            fullscreen_stretched,
             scale_hack,
             host_screen_size,
             software_presentation,
@@ -1476,7 +1479,8 @@ impl Window {
             };
             log!("{} selected as the host presentation backend; guest EAGL remains on the existing GLES2 compatibility path", options.graphics_api.label());
             match presentation {
-                Ok(presentation) => {
+                Ok(mut presentation) => {
+                    presentation.set_stretch_to_fill(fullscreen_stretched);
                     log!(
                         "{} presentation initialized successfully",
                         options.graphics_api.label()
@@ -2895,9 +2899,9 @@ impl Window {
                 // Also show FPS in the window title so it's visible when the
                 // app is running fullscreen or without console.
                 let base_title = if crate::branding().is_empty() {
-                    format!("RadekHLE 6.0 {}", crate::VERSION)
+                    format!("RadekHLE 7.0 {}", crate::VERSION)
                 } else {
-                    format!("RadekHLE 6.0 {} {}", crate::branding(), crate::VERSION)
+                    format!("RadekHLE 7.0 {} {}", crate::branding(), crate::VERSION)
                 };
                 let title = format!("{} - FPS: {:.1}", base_title, fps);
                 // Ignore any error setting the title.
@@ -3070,6 +3074,10 @@ impl Window {
     /// The aspect ratio of this region always reflects the guest app's view of
     /// the world, but the scale and orientation might not.
     pub fn viewport(&self) -> (u32, u32, u32, u32) {
+        if self.fullscreen_stretched {
+            let (screen_width, screen_height) = self.window.drawable_size();
+            return (0, 0, screen_width, screen_height);
+        }
         let (app_width, app_height) = size_for_orientation_from_size(
             self.screen_size(),
             self.device_orientation,
@@ -3108,6 +3116,9 @@ impl Window {
     /// Transform an already-rendered game-space image for final display only.
     /// Guest matrices and viewports never use this transform.
     pub fn presentation_matrix(&self) -> Matrix<2> {
+        if self.fullscreen_stretched {
+            return Matrix::identity();
+        }
         let render_rotation = match self.render_rotation {
             RenderRotation::Default => Matrix::identity(),
             RenderRotation::Minus90 => Matrix::z_rotation(-FRAC_PI_2),
@@ -3124,6 +3135,9 @@ impl Window {
     }
 
     fn presentation_quarter_turns(&self) -> i32 {
+        if self.fullscreen_stretched {
+            return 0;
+        }
         let device_turns: i32 = match self.device_orientation {
             DeviceOrientation::Portrait => 0,
             DeviceOrientation::LandscapeRight => 1,
@@ -3242,7 +3256,7 @@ pub fn show_error_messagebox(window: Option<&Window>, error_message: &str) {
         messagebox::MessageBoxFlag::ERROR,
         &mbox,
         "touchHLE crashed!",
-        &format!("RadekHLE 6.0 crashed with the following error: {error_message}"),
+        &format!("RadekHLE 7.0 crashed with the following error: {error_message}"),
         window.map(|win| &win.window),
         None,
     ) else {

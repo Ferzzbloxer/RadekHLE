@@ -35,6 +35,8 @@ const AL_POSITION: i32 = 0x1004;
 const AL_REFERENCE_DISTANCE: i32 = 0x1020;
 const AL_ROLLOFF_FACTOR: i32 = 0x1021;
 const AL_MAX_DISTANCE: i32 = 0x1023;
+const AUDIO_UNIT_TARGET_UNPROCESSED_BUFFERS: i32 = 6;
+const AUDIO_UNIT_PRIMING_PASSES: usize = 4;
 
 fn audio_format_is_non_interleaved(format: &AudioStreamBasicDescription) -> bool {
     (format.format_flags & kAudioFormatFlagIsNonInterleaved) != 0
@@ -1074,7 +1076,7 @@ fn render_audio_unit_buses(env: &mut Environment, audio_unit: AudioUnit) {
                 context.GetSourcei(al_source, AL_BUFFERS_PROCESSED, &mut processed);
             }
         }
-        if queued.saturating_sub(processed) > 1 {
+        if queued.saturating_sub(processed) >= AUDIO_UNIT_TARGET_UNPROCESSED_BUFFERS {
             // Источник ещё не успел проиграть то, что уже в очереди.
             // Сливаем отыгранные буферы и пропускаем рендер на этот тик.
             let mut drained: Vec<ALuint> = Vec::new();
@@ -1245,7 +1247,7 @@ fn render_audio_unit_buses(env: &mut Environment, audio_unit: AudioUnit) {
     }
 }
 
-pub fn render_audio_unit(env: &mut Environment, audio_unit: AudioUnit) {
+fn render_audio_unit_once(env: &mut Environment, audio_unit: AudioUnit) {
     if env.bundle.bundle_identifier().starts_with("com.ea.simcity") {
         // Применяем хак специфичный для SimCity: пропускаем рендеринг
         return;
@@ -1369,7 +1371,7 @@ pub fn render_audio_unit(env: &mut Environment, audio_unit: AudioUnit) {
     }
 
     let remaining_buffers = queued_buffers.saturating_sub(processed_buffers);
-    if remaining_buffers > 2 {
+    if remaining_buffers >= AUDIO_UNIT_TARGET_UNPROCESSED_BUFFERS {
         let mut drained_buffers = Vec::new();
         {
             let context = env
@@ -1644,6 +1646,72 @@ pub fn render_audio_unit(env: &mut Environment, audio_unit: AudioUnit) {
         obj.render_callbacks = obj.render_callbacks.saturating_add(1);
         obj.rendered_frames = obj.rendered_frames.saturating_add(u64::from(frames));
         obj.is_running_handler = false;
+    }
+}
+
+fn audio_unit_has_buffer_lead(env: &mut Environment, audio_unit: AudioUnit) -> bool {
+    let sources = {
+        let state = audio_components::State::get(&mut env.framework_state);
+        let Some(instance) = state.audio_component_instances.get(&audio_unit) else {
+            return true;
+        };
+        let mut sources = Vec::new();
+        if let Some(source) = instance.al_source {
+            sources.push(source);
+        }
+        sources.extend(
+            instance
+                .mixer_buses
+                .values()
+                .filter_map(|bus| bus.al_source),
+        );
+        sources
+    };
+    if sources.is_empty() {
+        return false;
+    }
+
+    let context = env
+        .framework_state
+        .audio_toolbox
+        .al_context
+        .make_al_context_current(&mut env.openal_manager);
+    sources.into_iter().all(|source| {
+        let mut queued = 0;
+        let mut processed = 0;
+        unsafe {
+            context.GetSourcei(source, AL_BUFFERS_QUEUED, &mut queued);
+            context.GetSourcei(source, AL_BUFFERS_PROCESSED, &mut processed);
+            if context.GetError() != 0 {
+                return false;
+            }
+        }
+        queued.saturating_sub(processed) >= AUDIO_UNIT_TARGET_UNPROCESSED_BUFFERS
+    })
+}
+
+pub fn render_audio_unit(env: &mut Environment, audio_unit: AudioUnit) {
+    let active = audio_components::State::get(&mut env.framework_state)
+        .audio_component_instances
+        .get(&audio_unit)
+        .is_some_and(|instance| {
+            instance.started
+                && (instance.render_callback.is_some()
+                    || instance
+                        .mixer_buses
+                        .values()
+                        .any(|bus| bus.render_callback.is_some()))
+        });
+    if !active {
+        render_audio_unit_once(env, audio_unit);
+        return;
+    }
+
+    for _ in 0..AUDIO_UNIT_PRIMING_PASSES {
+        if audio_unit_has_buffer_lead(env, audio_unit) {
+            break;
+        }
+        render_audio_unit_once(env, audio_unit);
     }
 }
 

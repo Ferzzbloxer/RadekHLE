@@ -345,6 +345,9 @@ impl RenderRotation {
 #[derive(Clone)]
 pub struct Options {
     pub fullscreen: bool,
+    /// Fill the host display without preserving the emulated device aspect ratio.
+    /// This is a presentation-only option; guest orientation and input geometry stay unchanged.
+    pub fullscreen_stretched: bool,
     pub device_family: Option<DeviceFamily>,
     pub auto_device_family: bool,
     /// When set, the guest sees a screen of exactly this size (in points) and
@@ -469,6 +472,7 @@ impl Default for Options {
     fn default() -> Self {
         Options {
             fullscreen: false,
+            fullscreen_stretched: false,
             device_family: None,
             auto_device_family: false,
             host_screen_size: None,
@@ -505,7 +509,7 @@ impl Default for Options {
             arm64_backend: Arm64Backend::Interpreter,
             arm64_fallback: Arm64Fallback::Interpreter,
             llvmpipe_fallback: false,
-            metal_translator: false,
+            metal_translator: true,
             gdb_listen_addrs: None,
             preferred_languages: None,
             headless: false,
@@ -567,6 +571,11 @@ impl Options {
 
         if arg == "--fullscreen" {
             self.fullscreen = true;
+        } else if arg == "--fullscreen-stretched" {
+            self.fullscreen = true;
+            self.fullscreen_stretched = true;
+        } else if arg == "--disable-fullscreen-stretched" {
+            self.fullscreen_stretched = false;
         } else if arg == "--landscape-left" {
             self.initial_orientation = DeviceOrientation::LandscapeLeft;
         } else if arg == "--landscape-right" {
@@ -1106,6 +1115,24 @@ mod tests {
     }
 
     #[test]
+    fn fullscreen_stretched_is_presentation_only() {
+        let mut options = Options::default();
+        assert!(!options.fullscreen_stretched);
+        options.parse_argument("--fullscreen-stretched").unwrap();
+        assert!(options.fullscreen);
+        assert!(options.fullscreen_stretched);
+        options
+            .parse_argument("--disable-fullscreen-stretched")
+            .unwrap();
+        assert!(!options.fullscreen_stretched);
+    }
+
+    #[test]
+    fn metal_translator_is_enabled_by_default() {
+        assert!(Options::default().metal_translator);
+    }
+
+    #[test]
     fn ultra_battery_saver_caps_fps_and_enables_pacing() {
         let mut options = Options::default();
         assert!(!options.ultra_battery_saver);
@@ -1152,7 +1179,7 @@ mod tests {
     fn default_graphics_api_does_not_enable_a_translator() {
         let options = Options::default();
         assert_eq!(options.graphics_api, GraphicsApi::Default);
-        assert!(!options.metal_translator);
+        assert!(options.metal_translator);
     }
 
     #[test]

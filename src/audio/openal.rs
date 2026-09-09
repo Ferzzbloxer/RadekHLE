@@ -71,6 +71,20 @@ impl OpenALManager {
 }
 
 fn ensure_openal_backend_available() {
+    // Keep the Android mixer on its own host thread and give it a modest
+    // hardware-sized block. Guest rendering can then pause briefly without
+    // starving the device callback; explicit ALSOFT_* settings still win.
+    if cfg!(target_os = "android") {
+        unsafe {
+            if std::env::var_os("ALSOFT_MIXER_THREADS").is_none() {
+                std::env::set_var("ALSOFT_MIXER_THREADS", "1");
+            }
+            if std::env::var_os("ALSOFT_BUFFER_SIZE").is_none() {
+                std::env::set_var("ALSOFT_BUFFER_SIZE", "1024");
+            }
+        }
+    }
+
     // Respect any user-provided override.
     if std::env::var_os("ALSOFT_DRIVERS").is_some() {
         return;
