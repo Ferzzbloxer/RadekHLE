@@ -1,44 +1,55 @@
 #!/usr/bin/env python3
 """
 Injects a first-run "seed the bundled game into touchHLE_apps" step into
-RadekHLE's MainActivity.java.
+RadekHLE's real MainActivity.java (org.radekhle.android.MainActivity,
+which extends SDLActivity and has no onCreate override of its own).
 
-This was written against the DECOMPILED STRING TABLE of a RadekHLE APK,
-not the real source, so it's deliberately conservative: it looks for the
-onCreate(...) method signature and inserts a call right after its opening
-brace. If it can't find that pattern, it exits with an error instead of
-guessing further, so you don't end up with a silently-broken build.
+Rewritten against the actual source (confirmed 2026-09) rather than a
+decompiled guess. It:
+  1. Adds an onCreate(Bundle) override that seeds the game before calling
+     super.onCreate(...) (native init/game-scan happens inside the SDL
+     base class, so seeding must happen first).
+  2. Reuses the existing private gameFolderTarget() helper already defined
+     in this file instead of duplicating the touchHLE_apps path logic.
 
 Usage: python3 seed_bundled_app.py <path/to/MainActivity.java>
 """
-import re
 import sys
 
-SEED_METHOD = """
+CLASS_DECL = "public class MainActivity extends SDLActivity {"
+
+INJECTED_BLOCK = """
+    @Override
+    protected void onCreate(android.os.Bundle savedInstanceState) {
+        seedBundledAppIfNeeded();
+        super.onCreate(savedInstanceState);
+    }
+
     // --- injected by seed_bundled_app.py: bundle a fixed game into touchHLE_apps ---
-    private void seedBundledAppIfNeeded() {
-        java.io.File appsDir = new java.io.File(getExternalFilesDir(null), "touchHLE_apps");
-        appsDir.mkdirs();
-        java.io.File dest = new java.io.File(appsDir, "game.ipa");
-        if (!dest.exists()) {
-            try (java.io.InputStream in = getAssets().open("game.ipa");
-                 java.io.OutputStream out = new java.io.FileOutputStream(dest)) {
-                byte[] buf = new byte[8192];
-                int n;
-                while ((n = in.read(buf)) > 0) {
-                    out.write(buf, 0, n);
-                }
-            } catch (java.io.IOException e) {
-                android.util.Log.e("RadekHLE", "Couldn't seed bundled game: " + e);
+    private static void seedBundledAppIfNeeded() {
+        File target = gameFolderTarget();
+        if (!target.exists() && !target.mkdirs()) {
+            Log.e(TAG, "Couldn't create game folder: " + target);
+            return;
+        }
+        File dest = new File(target, "game.ipa");
+        if (dest.exists()) {
+            return;
+        }
+        try (InputStream input = getContext().getAssets().open("game.ipa");
+             OutputStream output = new FileOutputStream(dest)) {
+            byte[] buffer = new byte[1024 * 1024];
+            int count;
+            while ((count = input.read(buffer)) != -1) {
+                output.write(buffer, 0, count);
             }
+            Log.i(TAG, "Seeded bundled game into " + dest);
+        } catch (Exception ex) {
+            Log.e(TAG, "Couldn't seed bundled game", ex);
         }
     }
     // --- end injected block ---
 """
-
-ONCREATE_RE = re.compile(
-    r"(protected\s+void\s+onCreate\s*\([^)]*\)\s*\{)"
-)
 
 
 def main():
@@ -54,41 +65,24 @@ def main():
         print(f"[seed_bundled_app] {path} already patched, skipping.")
         return
 
-    match = ONCREATE_RE.search(content)
-    if not match:
+    if CLASS_DECL not in content:
         print(
-            "[seed_bundled_app] ERROR: couldn't find a `protected void onCreate(...)` "
-            "signature in this file. RadekHLE's real MainActivity.java may differ from "
-            "what this script expects (e.g. a different visibility modifier, or logic "
-            "split across a base class). Open the file, find onCreate manually, and "
-            "add a call to a seeding method yourself -- see the README for the method "
-            "body to use.",
+            "[seed_bundled_app] ERROR: couldn't find the expected class declaration:\n"
+            f"    {CLASS_DECL}\n"
+            "RadekHLE's MainActivity.java may have changed since this script was written. "
+            "Open the file, find the class body, and add an onCreate(Bundle) override that "
+            "calls a seeding method before super.onCreate(...) -- see this script's "
+            "INJECTED_BLOCK for the method body to reuse.",
             file=sys.stderr,
         )
         sys.exit(2)
 
-    insert_at = match.end()
-    # Insert the call to seedBundledAppIfNeeded() as the first statement in onCreate,
-    # and append the method definition itself just before the class's final closing brace.
-    patched = (
-        content[:insert_at]
-        + "\n        seedBundledAppIfNeeded();\n"
-        + content[insert_at:]
-    )
-
-    last_brace = patched.rfind("}")
-    if last_brace == -1:
-        print("[seed_bundled_app] ERROR: couldn't find the class's closing brace.", file=sys.stderr)
-        sys.exit(3)
-
-    patched = patched[:last_brace] + SEED_METHOD + "\n" + patched[last_brace:]
+    patched = content.replace(CLASS_DECL, CLASS_DECL + "\n" + INJECTED_BLOCK, 1)
 
     with open(path, "w", encoding="utf-8") as f:
         f.write(patched)
 
     print(f"[seed_bundled_app] Patched {path} successfully.")
-    print("[seed_bundled_app] Please review the diff before trusting a release build --")
-    print("[seed_bundled_app] this script has not been tested against RadekHLE's real source.")
 
 
 if __name__ == "__main__":
