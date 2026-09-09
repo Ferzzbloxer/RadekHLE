@@ -33,7 +33,7 @@ use crate::objc::{
 use crate::objc_classes;
 use crate::Environment;
 
-const kNumberBuffers: usize = 3;
+const kNumberBuffers: usize = 4;
 
 #[derive(Default)]
 struct AVAudioRecorderHostObject {
@@ -286,7 +286,7 @@ pub const CLASSES: ClassExports = objc_classes! {
     assert_eq!(size, env.mem.read(tmp_size_ptr));
     let prop_size = env.mem.read(prop_size_ptr);
 
-    let (buffer_byte_size, num_packets_to_read) = derive_buffer_size(audio_desc, prop_size, 0.5);
+    let (buffer_byte_size, num_packets_to_read) = derive_buffer_size(audio_desc, prop_size, 1.0);
     env.objc.borrow_mut::<AVAudioPlayerHostObject>(this).num_packets_to_read = num_packets_to_read;
     let buffers: MutPtr<AudioQueueBufferRef> = env.mem.alloc(kNumberBuffers as GuestUSize * guest_size_of::<AudioQueueBufferRef>()).cast();
     env.objc.borrow_mut::<AVAudioPlayerHostObject>(this).audio_queue_buffers = Some(buffers);

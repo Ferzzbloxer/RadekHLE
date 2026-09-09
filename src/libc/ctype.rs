@@ -75,7 +75,7 @@ fn get_default_rune_locale(env: &mut Environment) -> ConstVoidPtr {
         let c: u8 = idx.try_into().unwrap();
 
         let as_lower = c.to_ascii_lowercase();
-        let as_upper = c.to_ascii_lowercase();
+        let as_upper = c.to_ascii_uppercase();
 
         let mut as_runetype = 0u32;
         if c.is_ascii_alphabetic() {

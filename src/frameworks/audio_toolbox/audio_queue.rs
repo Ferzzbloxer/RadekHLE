@@ -182,7 +182,7 @@ const kAudioQueueErr_InvalidProperty: OSStatus = -66684;
 /// `kAudioQueueErr_QueueNotStopped` from Apple's `AudioQueue.h`. Returned by
 /// `AudioQueueSetOfflineRenderFormat` when the queue is currently running.
 const kAudioQueueErr_QueueNotStopped: OSStatus = -66677;
-const AUDIO_QUEUE_TARGET_UNPROCESSED_BUFFERS: usize = 6;
+const AUDIO_QUEUE_TARGET_UNPROCESSED_BUFFERS: usize = 8;
 
 pub fn AudioQueueNewOutput(
     env: &mut Environment,
@@ -2059,9 +2059,7 @@ fn ensure_output_buffers(env: &mut Environment, in_aq: AudioQueueRef) {
             .audio_queues
             .get(&in_aq)
             .is_some_and(|queue| {
-                queue.buffers.contains(&buffer_ptr)
-                    && !queue.buffer_queue.contains(&buffer_ptr)
-                    && env.mem.read(buffer_ptr).audio_data_byte_size == 0
+                queue.buffers.contains(&buffer_ptr) && !queue.buffer_queue.contains(&buffer_ptr)
             });
         if should_callback && callback_proc.addr_with_thumb_bit() != 0 {
             let () = callback_proc.call_from_host(env, (callback_user_data, in_aq, buffer_ptr));
@@ -2387,13 +2385,14 @@ fn AudioQueueReset(env: &mut Environment, in_aq: AudioQueueRef) -> OSStatus {
     }
 
     host_object.buffer_queue.clear();
+    host_object.decoded_buffer_cache.clear();
 
     0 // success
 }
 
-fn AudioQueueFlush(_env: &mut Environment, in_aq: AudioQueueRef) -> OSStatus {
+fn AudioQueueFlush(env: &mut Environment, in_aq: AudioQueueRef) -> OSStatus {
     return_if_null!(in_aq);
-    0 // success
+    AudioQueueReset(env, in_aq)
 }
 
 fn AudioQueueFreeBuffer(

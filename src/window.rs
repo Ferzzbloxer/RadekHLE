@@ -3116,9 +3116,6 @@ impl Window {
     /// Transform an already-rendered game-space image for final display only.
     /// Guest matrices and viewports never use this transform.
     pub fn presentation_matrix(&self) -> Matrix<2> {
-        if self.fullscreen_stretched {
-            return Matrix::identity();
-        }
         let render_rotation = match self.render_rotation {
             RenderRotation::Default => Matrix::identity(),
             RenderRotation::Minus90 => Matrix::z_rotation(-FRAC_PI_2),
@@ -3135,9 +3132,6 @@ impl Window {
     }
 
     fn presentation_quarter_turns(&self) -> i32 {
-        if self.fullscreen_stretched {
-            return 0;
-        }
         let device_turns: i32 = match self.device_orientation {
             DeviceOrientation::Portrait => 0,
             DeviceOrientation::LandscapeRight => 1,

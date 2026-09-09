@@ -258,10 +258,13 @@ pub const CLASSES: ClassExports = objc_classes! {
 
 /// For use by Audio Toolbox.
 pub fn add_audio_unit(env: &mut Environment, run_loop: id, unit: AudioUnit) {
-    env.objc
+    let units = &mut env
+        .objc
         .borrow_mut::<NSRunLoopHostObject>(run_loop)
-        .audio_units
-        .push(unit);
+        .audio_units;
+    if !units.contains(&unit) {
+        units.push(unit);
+    }
 }
 
 /// For use by Audio Toolbox.
@@ -283,10 +286,13 @@ pub fn remove_audio_unit(env: &mut Environment, run_loop: id, unit: AudioUnit) -
 /// mechanism?
 /// TODO: Handle run loop modes. Currently assumes the common modes.
 pub fn add_audio_queue(env: &mut Environment, run_loop: id, queue: AudioQueueRef) {
-    env.objc
+    let queues = &mut env
+        .objc
         .borrow_mut::<NSRunLoopHostObject>(run_loop)
-        .audio_queues
-        .push(queue);
+        .audio_queues;
+    if !queues.contains(&queue) {
+        queues.push(queue);
+    }
 }
 
 /// For use by Audio Toolbox.
@@ -295,8 +301,9 @@ pub fn remove_audio_queue(env: &mut Environment, run_loop: id, queue: AudioQueue
         .objc
         .borrow_mut::<NSRunLoopHostObject>(run_loop)
         .audio_queues;
-    let queue_idx = queues.iter().position(|&item| item == queue).unwrap();
-    queues.remove(queue_idx);
+    if let Some(queue_idx) = queues.iter().position(|&item| item == queue) {
+        queues.remove(queue_idx);
+    }
 }
 
 /// For use by NSTimer so it can remove itself once it's invalidated.
@@ -374,15 +381,6 @@ pub fn run_run_loop(
         //  committed automatically when the thread’s runloop next iterates."
         ca_transaction::State::commit_implicit_transaction(env);
 
-        // We want to process those only on the main run loop
-        if is_main_run_loop {
-            let next_due = uikit::handle_events(env);
-            limit_sleep_time(&mut sleep_until, next_due);
-
-            let next_due = core_animation::recomposite_if_necessary(env, false);
-            limit_sleep_time(&mut sleep_until, next_due);
-        }
-
         assert!(timers_tmp.is_empty());
         timers_tmp.extend_from_slice(&env.objc.borrow::<NSRunLoopHostObject>(run_loop).timers);
         // Retain the timers in case a timer cancels another timer
@@ -418,13 +416,20 @@ pub fn run_run_loop(
             handle_audio_queue(env, audio_queue);
         }
 
-        // TODO: not clear if audio units should be processed in the run loop
         assert!(audio_units_tmp.is_empty());
         audio_units_tmp
             .extend_from_slice(&env.objc.borrow::<NSRunLoopHostObject>(run_loop).audio_units);
 
         for audio_unit in audio_units_tmp.drain(..) {
             render_audio_unit(env, audio_unit);
+        }
+
+        if is_main_run_loop {
+            let next_due = uikit::handle_events(env);
+            limit_sleep_time(&mut sleep_until, next_due);
+
+            let next_due = core_animation::recomposite_if_necessary(env, false);
+            limit_sleep_time(&mut sleep_until, next_due);
         }
 
         // Process Audio Services completion callbacks. Apple's
@@ -484,12 +489,11 @@ pub fn run_run_loop(
             // (Apple's epoch is less convenient in Rust. And "pure"
             // Rust approach with Duration/Instant is just too troublesome
             // and not worthy to convert back and forth)
-            if SystemTime::now()
+            let now_secs = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs_f64()
-                >= limit
-            {
+                .unwrap_or_default()
+                .as_secs_f64();
+            if now_secs >= limit {
                 break;
             }
         }

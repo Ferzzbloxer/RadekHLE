@@ -40,6 +40,22 @@ fn is_known_library(path: &str) -> bool {
         .any(|dylib| dylib.path == path || dylib.aliases.contains(&path))
 }
 
+fn is_sqlite_library(path: &str) -> bool {
+    let basename = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    matches!(
+        basename,
+        "sqlite3"
+            | "sqlite3.dylib"
+            | "sqlite3.so"
+            | "sqlite3.so.0"
+            | "libsqlite3"
+            | "libsqlite3.dylib"
+            | "libsqlite3.so"
+            | "libsqlite3.so.0"
+            | "libsqlite3.so.3"
+    )
+}
+
 /// Реализация функции `dlopen` стандарта POSIX.
 /// Загружает динамическую библиотеку в адресное пространство процесса (или
 //симулирует этот процесс в HLE).
@@ -73,7 +89,7 @@ fn dlopen(env: &mut Environment, path: ConstPtr<u8>, _mode: i32) -> MutVoidPtr {
 
     // --- EKLENECEK KOD BAŞLANGICI ---
     // Mono'nun sqlite3 arayışını çökmeden atlatması için global scope (RTLD_DEFAULT) döndürüyoruz.
-    if path_str.contains("sqlite3") {
+    if is_sqlite_library(path_str) {
         return RTLD_DEFAULT;
     }
 

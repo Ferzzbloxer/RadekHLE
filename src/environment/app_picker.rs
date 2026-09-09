@@ -1385,9 +1385,9 @@ fn app_picker_inner(
                 &copyright_info_text,
                 copyright_info_page_idx,
             );
-            () = msg![env; (copyright_info_stuff.main_view) setHidden:false];
+            animate_picker_panel(env, copyright_info_stuff.main_view, true);
         } else if std::mem::take(&mut host_obj.copyright_hide) {
-            () = msg![env; (copyright_info_stuff.main_view) setHidden:true];
+            animate_picker_panel(env, copyright_info_stuff.main_view, false);
         } else if std::mem::take(&mut host_obj.copyright_prev) && copyright_info_page_idx != 0 {
             copyright_info_page_idx -= 1;
             change_copyright_page(
@@ -1407,11 +1407,11 @@ fn app_picker_inner(
                 copyright_info_page_idx,
             );
         } else if std::mem::take(&mut host_obj.quick_options_show) {
-            () = msg![env; (quick_options_stuff.settings_backdrop) setHidden:false];
-            () = msg![env; (quick_options_stuff.main_view) setHidden:false];
+            animate_picker_panel(env, quick_options_stuff.settings_backdrop, true);
+            animate_picker_panel(env, quick_options_stuff.main_view, true);
         } else if std::mem::take(&mut host_obj.quick_options_hide) {
-            () = msg![env; (quick_options_stuff.main_view) setHidden:true];
-            () = msg![env; (quick_options_stuff.settings_backdrop) setHidden:true];
+            animate_picker_panel(env, quick_options_stuff.main_view, false);
+            animate_picker_panel(env, quick_options_stuff.settings_backdrop, false);
         } else if std::mem::take(&mut host_obj.apps_refresh_requested) {
             let apps_dir = paths::user_data_base_path().join(paths::APPS_DIR);
             match enumerate_apps(&apps_dir) {
@@ -3854,6 +3854,32 @@ fn setup_quick_options(
         device_model_items,
         device_model_thumb,
     }
+}
+
+fn animate_picker_panel(env: &mut Environment, panel: id, visible: bool) {
+    if panel == nil {
+        return;
+    }
+    let key_path = ns_string::get_static_str(env, "opacity");
+    let animation: id = msg_class![env; CABasicAnimation animationWithKeyPath:key_path];
+    let from_alpha: f32 = if visible { 0.0 } else { 1.0 };
+    let to_alpha: f32 = if visible { 1.0 } else { 0.0 };
+    let from_value: id = msg_class![env; NSNumber numberWithFloat:from_alpha];
+    let to_value: id = msg_class![env; NSNumber numberWithFloat:to_alpha];
+    () = msg![env; animation setFromValue:from_value];
+    () = msg![env; animation setToValue:to_value];
+    () = msg![env; animation setDuration:(0.16_f64)];
+    () = msg![env; animation setRemovedOnCompletion:true];
+    () = msg![env; panel setUserInteractionEnabled:visible];
+    if visible {
+        () = msg![env; panel setHidden:false];
+        () = msg![env; panel setAlpha:(1.0 as CGFloat)];
+    } else {
+        () = msg![env; panel setAlpha:(0.0 as CGFloat)];
+    }
+    let layer: id = msg![env; panel layer];
+    () = msg![env; layer addAnimation:animation forKey:key_path];
+    release(env, key_path);
 }
 
 /// Re-lay-out and re-style the device-model dropdown list for the given scroll
