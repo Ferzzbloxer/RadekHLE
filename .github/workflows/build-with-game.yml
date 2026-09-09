@@ -64,21 +64,18 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Restore missing Gradle wrapper scripts
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+
       - name: Build APK
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
-          GRADLEW=$(find . -maxdepth 3 -name "gradlew" | head -n1)
-          if [ -z "$GRADLEW" ]; then
-            echo "::error::No gradlew wrapper found anywhere in the repo (searched 3 levels deep)."
-            echo "Top-level structure:"
-            find . -maxdepth 3 -type d | sort
-            exit 1
-          fi
-          echo "Using gradle wrapper at: $GRADLEW"
-          chmod +x "$GRADLEW"
-          PROJECT_DIR=$(dirname "$GRADLEW")
-          cd "$PROJECT_DIR"
+          cd android
+          gradle wrapper
+          chmod +x ./gradlew
           ./gradlew assembleRelease --stacktrace
 
       - name: Upload APK artifact
