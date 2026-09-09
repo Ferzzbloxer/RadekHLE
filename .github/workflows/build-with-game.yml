@@ -3,7 +3,7 @@ name: Build RadekHLE with bundled game
 on:
   workflow_dispatch: {}
   push:
-    branches: [ main ]
+    branches: [ "trunk" ]
 
 jobs:
   build:
