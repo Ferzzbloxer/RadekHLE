@@ -127,7 +127,7 @@ pub fn main<T: Iterator<Item = String>>(mut args: T) -> Result<(), String> {
     crate::perf::configure_from_environment();
     crate::perf::reset();
     echo!(
-        "RadekHLE 6.0 {}{}{} git_sha={}",
+        "RadekHLE 7.0 {}{}{} git_sha={}",
         branding(),
         if branding().is_empty() { "" } else { " " },
         VERSION,
@@ -447,6 +447,8 @@ pub fn main<T: Iterator<Item = String>>(mut args: T) -> Result<(), String> {
             );
         }
     }
+    let display_rate = options.fps_limit.unwrap_or(60.0);
+    options.apply_power_profile(display_rate);
     crate::log::set_file_logging(options.log_file);
     if options.core_audio {
         unsafe {

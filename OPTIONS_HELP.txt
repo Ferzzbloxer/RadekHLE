@@ -382,6 +382,15 @@ Other options:
         Disabling it allows the emulator to run the guest as fast as possible,
         but may increase CPU/GPU usage and produce uneven presentation.
 
+    --battery-saver / --disable-battery-saver
+        Cap rendering at 24 FPS and reduce unnecessary wakeups.
+
+    --ultra-battery-saver / --disable-ultra-battery-saver
+        Use the strict low-power profile: cap rendering at 10 FPS, disable frame
+        generation, and force optional graphics and memory work to their lowest
+        settings. This reduces host CPU/GPU/RAM pressure but cannot impose an
+        operating-system-level percentage cap on hardware resources.
+
     --frame-generation
         Enable display-frame generation up to the host display refresh rate.
         Off by default; this changes presentation only, not guest game logic.

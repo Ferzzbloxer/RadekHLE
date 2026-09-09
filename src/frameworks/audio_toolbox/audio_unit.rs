@@ -9,6 +9,7 @@
 use std::time::Instant;
 
 use crate::abi::CallFromHost;
+use crate::audio::openal as al;
 use crate::audio::openal::al_types::{ALuint, ALvoid};
 use crate::audio::openal::{
     OpenAL, AL_BUFFERS_PROCESSED, AL_BUFFERS_QUEUED, AL_PLAYING, AL_SOURCE_STATE,
@@ -958,8 +959,8 @@ fn AudioUnitProcess(
 }
 
 fn AudioUnitProcessMultiple(
-    _e: &mut Environment,
-    _u: AudioUnit,
+    env: &mut Environment,
+    in_unit: AudioUnit,
     _f: MutPtr<u32>,
     _t: ConstVoidPtr,
     _n: u32,
@@ -967,6 +968,7 @@ fn AudioUnitProcessMultiple(
     _in_bl: ConstVoidPtr,
     _out_bl: MutVoidPtr,
 ) -> OSStatus {
+    render_audio_unit(env, in_unit);
     0
 }
 fn AudioUnitComplexRender(
@@ -1170,6 +1172,17 @@ fn render_audio_unit_buses(env: &mut Environment, audio_unit: AudioUnit) {
         if env.options.low_audio_quality {
             (decoded_sample_rate, processed) =
                 apply_lower_audio_quality(al_fmt, decoded_sample_rate, processed);
+        }
+
+        if processed.is_empty() {
+            let bytes_per_frame = match al_fmt {
+                al::AL_FORMAT_MONO8 => 1,
+                al::AL_FORMAT_STEREO8 => 2,
+                al::AL_FORMAT_MONO16 => 2,
+                al::AL_FORMAT_STEREO16 => 4,
+                _ => 2,
+            };
+            processed.resize(frames as usize * bytes_per_frame, 0);
         }
 
         if !processed.is_empty() {
@@ -1571,6 +1584,16 @@ pub fn render_audio_unit(env: &mut Environment, audio_unit: AudioUnit) {
     if env.options.low_audio_quality {
         (decoded_sample_rate, processed) =
             apply_lower_audio_quality(al_fmt, decoded_sample_rate, processed);
+    }
+    if processed.is_empty() {
+        let bytes_per_frame = match al_fmt {
+            al::AL_FORMAT_MONO8 => 1,
+            al::AL_FORMAT_STEREO8 => 2,
+            al::AL_FORMAT_MONO16 => 2,
+            al::AL_FORMAT_STEREO16 => 4,
+            _ => 2,
+        };
+        processed.resize(frames as usize * bytes_per_frame, 0);
     }
     {
         let context = env

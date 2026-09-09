@@ -22,7 +22,7 @@ com.telltalegames.Grickle101Low: --landscape-left
 # legacy orientation fallback to select PortraitUpsideDown.
 com.telltalegames.Grickle101: --landscape-left
 
-# Early Telltale iPad/iPhone engine builds use the GLES2 subset provided by
-# touchHLE's desktop OpenGL 2.1 compatibility backend.
-com.telltalegames.SamMax301: --landscape-left --gles2-compat
-com.telltalegames.WallaceGromit102: --landscape-left --gles2-compat
+# Early Telltale iPad/iPhone engine builds keep their landscape orientation
+# here; any GLES compatibility override is opt-in from the settings screen.
+com.telltalegames.SamMax301: --landscape-left
+com.telltalegames.WallaceGromit102: --landscape-left

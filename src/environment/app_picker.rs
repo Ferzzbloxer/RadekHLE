@@ -322,6 +322,7 @@ struct AppPickerDelegateHostObject {
     fps_limit: Option<Option<f64>>,
     vsync: Option<bool>,
     battery_saver: Option<bool>,
+    ultra_battery_saver: Option<bool>,
     frame_generation: Option<bool>,
     fullscreen: Option<bool>,
     angle_driver: Option<bool>,
@@ -536,6 +537,10 @@ const CLASSES: ClassExports = objc_classes! {
 - (())batterySaver:(id)switch {
     let switch_state: bool = msg![env; switch isOn];
     env.objc.borrow_mut::<AppPickerDelegateHostObject>(this).battery_saver = Some(switch_state);
+}
+- (())ultraBatterySaver:(id)switch {
+    let switch_state: bool = msg![env; switch isOn];
+    env.objc.borrow_mut::<AppPickerDelegateHostObject>(this).ultra_battery_saver = Some(switch_state);
 }
 - (())frameGeneration:(id)switch {
     let switch_state: bool = msg![env; switch isOn];
@@ -909,7 +914,7 @@ fn app_picker_inner(
         break;
     }
     if !found_wallpaper {
-        if let Ok(mut resource) = paths::ResourceFile::open("RadekHLE_ios26_wallpaper.png") {
+        if let Ok(mut resource) = paths::ResourceFile::open("RadekHLE_v7_wallpaper.png") {
             let mut bytes = Vec::new();
             if resource.get().read_to_end(&mut bytes).is_ok() {
                 if let Ok(image) = Image::from_bytes(&bytes) {
@@ -956,7 +961,7 @@ fn app_picker_inner(
         let text = ns_string::from_rust_string(
             env,
             format!(
-                "RadekHLE 6.0 {}{}{}",
+                "RadekHLE 7.0 {}{}{}",
                 crate::branding(),
                 if crate::branding().is_empty() {
                     ""
@@ -1056,6 +1061,7 @@ fn app_picker_inner(
     let mut quick_options_frame_generation = false;
     let mut quick_options_vsync = false;
     let mut quick_options_battery_saver = false;
+    let mut quick_options_ultra_battery_saver = false;
     let mut quick_options_verbose_logging = false;
     let mut quick_options_shader_compatibility_fixes = true;
     let mut quick_options_fix_texture_min_filter = cfg!(target_os = "android");
@@ -1275,6 +1281,7 @@ fn app_picker_inner(
         setOn:quick_options_frame_generation];
     () = msg![env; (quick_options_stuff.vsync_switch) setOn:quick_options_vsync];
     () = msg![env; (quick_options_stuff.battery_saver_switch) setOn:quick_options_battery_saver];
+    () = msg![env; (quick_options_stuff.ultra_battery_saver_switch) setOn:quick_options_ultra_battery_saver];
     () =
         msg![env; (quick_options_stuff.verbose_logging_switch) setOn:quick_options_verbose_logging];
     () = msg![env; (quick_options_stuff.fix_texture_min_filter_switch)
@@ -1798,6 +1805,13 @@ fn app_picker_inner(
             quick_options_vsync = enabled;
         } else if let Some(enabled) = std::mem::take(&mut host_obj.battery_saver) {
             quick_options_battery_saver = enabled;
+        } else if let Some(enabled) = std::mem::take(&mut host_obj.ultra_battery_saver) {
+            quick_options_ultra_battery_saver = enabled;
+            if enabled {
+                quick_options_battery_saver = true;
+                () = msg![env; (quick_options_stuff.battery_saver_switch) setOn:true];
+            }
+            () = msg![env; (quick_options_stuff.ultra_battery_saver_switch) setOn:enabled];
         } else if let Some(enabled) = std::mem::take(&mut host_obj.verbose_logging) {
             quick_options_verbose_logging = enabled;
         } else if let Some(enabled) = std::mem::take(&mut host_obj.shader_compatibility_fixes) {
@@ -1988,6 +2002,14 @@ fn app_picker_inner(
             "--battery-saver"
         } else {
             "--disable-battery-saver"
+        }
+        .to_string(),
+    );
+    option_args.push(
+        if quick_options_ultra_battery_saver {
+            "--ultra-battery-saver"
+        } else {
+            "--disable-ultra-battery-saver"
         }
         .to_string(),
     );
@@ -2906,6 +2928,7 @@ struct QuickOptionsStuff {
     no_texture_compression_switch: id,
     vsync_switch: id,
     battery_saver_switch: id,
+    ultra_battery_saver_switch: id,
     verbose_logging_switch: id,
     fix_texture_min_filter_switch: id,
     force_composition_switch: id,
@@ -3181,6 +3204,8 @@ fn setup_quick_options(
         RowKind::Switch("noTextureCompression:", false),
         RowKind::Label("Battery saver"),
         RowKind::Switch("batterySaver:", false),
+        RowKind::Label("Ultra battery saver (10 FPS)"),
+        RowKind::Switch("ultraBatterySaver:", false),
         RowKind::Label("Memory management"),
         RowKind::MemoryManagementDropdown,
         RowKind::Label("Dynarmic JIT"),
@@ -3287,6 +3312,7 @@ fn setup_quick_options(
     let mut no_texture_compression_switch: id = nil;
     let mut vsync_switch: id = nil;
     let mut battery_saver_switch: id = nil;
+    let mut ultra_battery_saver_switch: id = nil;
     let mut verbose_logging_switch: id = nil;
     let mut fix_texture_min_filter_switch: id = nil;
     let mut force_composition_switch: id = nil;
@@ -3533,6 +3559,9 @@ fn setup_quick_options(
                 }
                 if selector_name == "batterySaver:" {
                     battery_saver_switch = switch;
+                }
+                if selector_name == "ultraBatterySaver:" {
+                    ultra_battery_saver_switch = switch;
                 }
                 if selector_name == "verboseLogging:" {
                     verbose_logging_switch = switch;
@@ -3796,6 +3825,7 @@ fn setup_quick_options(
         no_texture_compression_switch,
         vsync_switch,
         battery_saver_switch,
+        ultra_battery_saver_switch,
         verbose_logging_switch,
         fix_texture_min_filter_switch,
         force_composition_switch,

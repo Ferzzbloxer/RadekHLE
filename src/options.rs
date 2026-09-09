@@ -86,7 +86,7 @@ impl Arm64Backend {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum GraphicsApi {
     Default,
     Translator,
@@ -400,6 +400,7 @@ pub struct Options {
     pub frame_pacing: bool,
     pub vsync: bool,
     pub battery_saver: bool,
+    pub ultra_battery_saver: bool,
     /// Generate presentation frames up to the host display refresh rate. Disabled by default.
     pub frame_generation: bool,
     /// Apply a safe, visual-only accelerating corruption effect to presented frames.
@@ -513,6 +514,7 @@ impl Default for Options {
             frame_pacing: true,
             vsync: false,
             battery_saver: false,
+            ultra_battery_saver: false,
             frame_generation: false,
             rtcs: false,
             force_composition: false,
@@ -833,6 +835,12 @@ impl Options {
             self.battery_saver = true;
         } else if arg == "--disable-battery-saver" || arg == "--battery-saver=off" {
             self.battery_saver = false;
+            self.ultra_battery_saver = false;
+        } else if arg == "--ultra-battery-saver" || arg == "--ultra-battery-saver=on" {
+            self.ultra_battery_saver = true;
+            self.battery_saver = true;
+        } else if arg == "--disable-ultra-battery-saver" || arg == "--ultra-battery-saver=off" {
+            self.ultra_battery_saver = false;
         } else if arg == "--frame-generation" || arg == "--frame-generation=on" {
             self.frame_generation = true;
         } else if arg == "--disable-frame-generation" || arg == "--frame-generation=off" {
@@ -922,6 +930,39 @@ impl Options {
             return Ok(false);
         };
         Ok(true)
+    }
+
+    pub fn effective_fps_limit(&self, display_rate: f64) -> f64 {
+        let configured = self.fps_limit.unwrap_or(display_rate).max(1.0);
+        let configured = if self.vsync {
+            configured.min(display_rate.max(1.0))
+        } else {
+            configured
+        };
+        if self.ultra_battery_saver {
+            configured.min(10.0)
+        } else if self.battery_saver {
+            configured.min(24.0)
+        } else {
+            configured
+        }
+    }
+
+    pub fn frame_pacing_enabled(&self) -> bool {
+        self.frame_pacing || self.vsync || self.battery_saver || self.ultra_battery_saver
+    }
+
+    pub fn apply_power_profile(&mut self, display_rate: f64) {
+        if !self.ultra_battery_saver {
+            return;
+        }
+        self.battery_saver = true;
+        self.fps_limit = Some(self.effective_fps_limit(display_rate));
+        self.frame_generation = false;
+        self.anisotropic_filtering = 1;
+        self.texture_upscaler = 1;
+        self.anti_aliasing = 1;
+        self.memory_management = MemoryManagement::Light;
     }
 }
 
@@ -1062,5 +1103,76 @@ mod tests {
             .parse_argument("--disable-low-audio-quality")
             .unwrap();
         assert!(!options.low_audio_quality);
+    }
+
+    #[test]
+    fn ultra_battery_saver_caps_fps_and_enables_pacing() {
+        let mut options = Options::default();
+        assert!(!options.ultra_battery_saver);
+        options.parse_argument("--ultra-battery-saver").unwrap();
+        assert!(options.ultra_battery_saver);
+        assert!(options.battery_saver);
+        assert!(options.frame_pacing_enabled());
+        assert_eq!(options.effective_fps_limit(120.0), 10.0);
+        options
+            .parse_argument("--disable-ultra-battery-saver")
+            .unwrap();
+        assert!(!options.ultra_battery_saver);
+        assert_eq!(options.effective_fps_limit(120.0), 24.0);
+    }
+
+    #[test]
+    fn vsync_caps_fps_to_display_rate() {
+        let mut options = Options::default();
+        options.vsync = true;
+        options.fps_limit = Some(120.0);
+        assert_eq!(options.effective_fps_limit(60.0), 60.0);
+    }
+
+    #[test]
+    fn ultra_battery_saver_enforces_low_power_profile() {
+        let mut options = Options::default();
+        options.frame_generation = true;
+        options.anisotropic_filtering = 16;
+        options.texture_upscaler = 4;
+        options.anti_aliasing = 8;
+        options.memory_management = MemoryManagement::Aggressive;
+        options.ultra_battery_saver = true;
+        options.apply_power_profile(120.0);
+        assert_eq!(options.fps_limit, Some(10.0));
+        assert!(options.battery_saver);
+        assert!(!options.frame_generation);
+        assert_eq!(options.anisotropic_filtering, 1);
+        assert_eq!(options.texture_upscaler, 1);
+        assert_eq!(options.anti_aliasing, 1);
+        assert_eq!(options.memory_management, MemoryManagement::Light);
+    }
+
+    #[test]
+    fn default_graphics_api_does_not_enable_a_translator() {
+        let options = Options::default();
+        assert_eq!(options.graphics_api, GraphicsApi::Default);
+        assert!(!options.metal_translator);
+    }
+
+    #[test]
+    fn ultra_battery_saver_caps_fps_and_disables_optional_work() {
+        let mut options = Options::default();
+        options.frame_generation = true;
+        options.anisotropic_filtering = 16;
+        options.texture_upscaler = 4;
+        options.anti_aliasing = 8;
+        options.memory_management = MemoryManagement::Aggressive;
+        options.parse_argument("--ultra-battery-saver").unwrap();
+        options.apply_power_profile(120.0);
+
+        assert!(options.ultra_battery_saver);
+        assert!(options.battery_saver);
+        assert_eq!(options.effective_fps_limit(120.0), 10.0);
+        assert!(!options.frame_generation);
+        assert_eq!(options.anisotropic_filtering, 1);
+        assert_eq!(options.texture_upscaler, 1);
+        assert_eq!(options.anti_aliasing, 1);
+        assert_eq!(options.memory_management, MemoryManagement::Light);
     }
 }

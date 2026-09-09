@@ -182,7 +182,7 @@ const kAudioQueueErr_InvalidProperty: OSStatus = -66684;
 /// `kAudioQueueErr_QueueNotStopped` from Apple's `AudioQueue.h`. Returned by
 /// `AudioQueueSetOfflineRenderFormat` when the queue is currently running.
 const kAudioQueueErr_QueueNotStopped: OSStatus = -66677;
-const AUDIO_QUEUE_TARGET_UNPROCESSED_BUFFERS: usize = 3;
+const AUDIO_QUEUE_TARGET_UNPROCESSED_BUFFERS: usize = 6;
 
 pub fn AudioQueueNewOutput(
     env: &mut Environment,

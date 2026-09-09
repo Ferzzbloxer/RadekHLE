@@ -44,6 +44,7 @@ impl FpsCounter {
     pub fn start() -> Self {
         LAST_FPS_TEXT.get_or_init(|| Mutex::new(String::new()));
         GLYPH_TEXTURES.get_or_init(|| Mutex::new(None));
+        let _ = process_cpu_percent();
         FpsCounter {
             time: Instant::now(),
             frames: 0,
@@ -78,6 +79,10 @@ pub fn set_onscreen_fps_enabled(enabled: bool) {
     ONSCREEN_FPS_ENABLED
         .get_or_init(|| AtomicBool::new(false))
         .store(enabled, Ordering::SeqCst);
+    if enabled {
+        let _ = process_cpu_percent();
+        refresh_hud_metrics();
+    }
 }
 
 pub fn set_onscreen_hud_architecture(architecture: &str) {
@@ -122,11 +127,12 @@ fn update_hud_text() {
     };
     if let Some(mutex) = LAST_FPS_TEXT.get() {
         if let Ok(mut value) = mutex.lock() {
-            *value = format!("FPS: {fps:.1} CPU: {cpu}% GPU: {gpu}% RAM: {ram}MB {architecture}");
+            *value = format!("FPS: {fps:.1}\nCPU: {cpu}% GPU: {gpu}%\nRAM: {ram}MB {architecture}");
         }
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn process_cpu_percent() -> Option<f32> {
     static SAMPLE: OnceLock<Mutex<Option<(u64, u64)>>> = OnceLock::new();
     let stat = std::fs::read_to_string("/proc/self/stat").ok()?;
@@ -153,14 +159,103 @@ fn process_cpu_percent() -> Option<f32> {
     let result = previous.take().and_then(|(old_process, old_total)| {
         let process_delta = process_ticks.saturating_sub(old_process);
         let total_delta = total_ticks.saturating_sub(old_total);
-        (total_delta > 0).then(|| {
-            let cores = std::thread::available_parallelism().map_or(1, |value| value.get()) as f32;
-            (process_delta as f32 / total_delta as f32 * cores * 100.0)
-                .clamp(0.0, 100.0 * cores as f32)
-        })
+        (total_delta > 0)
+            .then(|| (process_delta as f32 / total_delta as f32 * 100.0).clamp(0.0, 100.0))
     });
     *previous = Some((process_ticks, total_ticks));
     result
+}
+
+#[cfg(target_os = "windows")]
+fn process_cpu_percent() -> Option<f32> {
+    use std::time::Instant;
+    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
+
+    static SAMPLE: OnceLock<Mutex<Option<(u64, Instant)>>> = OnceLock::new();
+    let mut creation = FILETIME {
+        dwLowDateTime: 0,
+        dwHighDateTime: 0,
+    };
+    let mut exit = FILETIME {
+        dwLowDateTime: 0,
+        dwHighDateTime: 0,
+    };
+    let mut kernel = FILETIME {
+        dwLowDateTime: 0,
+        dwHighDateTime: 0,
+    };
+    let mut user = FILETIME {
+        dwLowDateTime: 0,
+        dwHighDateTime: 0,
+    };
+    let ok = unsafe {
+        GetProcessTimes(
+            GetCurrentProcess(),
+            &mut creation,
+            &mut exit,
+            &mut kernel,
+            &mut user,
+        )
+    };
+    if ok == 0 {
+        return None;
+    }
+    let process_time = (u64::from(kernel.dwLowDateTime) | (u64::from(kernel.dwHighDateTime) << 32))
+        .saturating_add(u64::from(user.dwLowDateTime) | (u64::from(user.dwHighDateTime) << 32));
+    let now = Instant::now();
+    let mutex = SAMPLE.get_or_init(|| Mutex::new(None));
+    let mut previous = mutex.lock().ok()?;
+    let result = previous.take().and_then(|(old_process, old_time)| {
+        let wall = now.duration_since(old_time).as_nanos() as f32 / 100.0;
+        let process = process_time.saturating_sub(old_process) as f32;
+        (wall > 0.0).then(|| {
+            let cores = std::thread::available_parallelism().map_or(1, |value| value.get()) as f32;
+            (process / wall * 100.0 / cores).clamp(0.0, 100.0)
+        })
+    });
+    *previous = Some((process_time, now));
+    result
+}
+
+#[cfg(target_os = "macos")]
+fn process_cpu_percent() -> Option<f32> {
+    use std::time::Instant;
+
+    static SAMPLE: OnceLock<Mutex<Option<(u64, Instant)>>> = OnceLock::new();
+    let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
+    if unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    let usage = unsafe { usage.assume_init() };
+    let process_time = (usage.ru_utime.tv_sec as u64)
+        .saturating_mul(1_000_000_000)
+        .saturating_add((usage.ru_utime.tv_usec as u64).saturating_mul(1_000))
+        .saturating_add((usage.ru_stime.tv_sec as u64).saturating_mul(1_000_000_000))
+        .saturating_add((usage.ru_stime.tv_usec as u64).saturating_mul(1_000));
+    let now = Instant::now();
+    let mutex = SAMPLE.get_or_init(|| Mutex::new(None));
+    let mut previous = mutex.lock().ok()?;
+    let result = previous.take().and_then(|(old_process, old_time)| {
+        let wall = now.duration_since(old_time).as_nanos() as f32;
+        let process = process_time.saturating_sub(old_process) as f32;
+        (wall > 0.0).then(|| {
+            let cores = std::thread::available_parallelism().map_or(1, |value| value.get()) as f32;
+            (process / wall * 100.0 / cores).clamp(0.0, 100.0)
+        })
+    });
+    *previous = Some((process_time, now));
+    result
+}
+
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "windows",
+    target_os = "macos"
+)))]
+fn process_cpu_percent() -> Option<f32> {
+    None
 }
 
 fn resident_memory_mb() -> Option<u64> {
@@ -456,8 +551,13 @@ unsafe fn ensure_glyph_textures(gles: &mut dyn GLES) -> Option<Vec<u32>> {
 unsafe fn draw_onscreen_text(gles: &mut dyn GLES, viewport: (u32, u32, u32, u32), text: &str) {
     use gles11::types::*;
     let (vx, vy, vw, vh) = viewport;
-    // Pixel size per glyph
-    let scale = 6;
+    let scale = if vw < 600 {
+        2
+    } else if vw < 1000 {
+        3
+    } else {
+        4
+    };
     let gw = (GLYPH_W * scale) as f32;
     let gh = (GLYPH_H * scale) as f32;
 
@@ -492,9 +592,15 @@ unsafe fn draw_onscreen_text(gles: &mut dyn GLES, viewport: (u32, u32, u32, u32)
 
     // Draw text at top-left with small margin
     let mut x_px = vx as f32 + 8.0;
-    let y_px = vy as f32 + 8.0;
+    let start_x = x_px;
+    let mut y_px = vy as f32 + 8.0;
 
     for ch in text.chars() {
+        if ch == '\n' {
+            x_px = start_x;
+            y_px += gh + 3.0;
+            continue;
+        }
         if let Some(idx) = glyph_index(ch) {
             let tex = texs[idx] as GLint;
             gles.BindTexture(gles11::TEXTURE_2D, tex as _);
