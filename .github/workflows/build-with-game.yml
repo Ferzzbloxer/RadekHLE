@@ -66,16 +66,16 @@ jobs:
 
       - name: Install standalone Gradle
         run: |
-          curl -sSL -o gradle.zip https://services.gradle.org/distributions/gradle-8.7-bin.zip
+          curl -sSL -o gradle.zip https://services.gradle.org/distributions/gradle-8.11.1-bin.zip
           unzip -q gradle.zip -d /opt
-          echo "/opt/gradle-8.7/bin" >> $GITHUB_PATH
-
+          echo "/opt/gradle-8.11.1/bin" >> $GITHUB_PATH
+      
       - name: Build APK
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
           cd android
-          gradle wrapper
+          gradle wrapper --gradle-version 8.11.1
           chmod +x ./gradlew
           ./gradlew assembleRelease --stacktrace
 
