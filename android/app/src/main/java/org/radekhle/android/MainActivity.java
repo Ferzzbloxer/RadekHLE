@@ -22,6 +22,16 @@ public class MainActivity extends SDLActivity {
     private static final int ADD_IPA_MESSAGE = 0x8000;
 
     @Override
+    protected String[] getArguments() {
+        File appsDir = new File(getExternalFilesDir(null), "touchHLE_apps");
+        File game = new File(appsDir, "game.ipa");
+        if (game.exists()) {
+            return new String[]{ game.getAbsolutePath() };
+        }
+        return super.getArguments();
+    }
+    
+    @Override
     protected String[] getLibraries() {
         return new String[]{
             "SDL2",
