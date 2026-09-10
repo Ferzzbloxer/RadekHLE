@@ -27,8 +27,6 @@ jobs:
           mkdir -p android/app/src/main/assets
           cp game_asset/game.ipa android/app/src/main/assets/game.ipa
 
-      # NOTE: adjust this path if RadekHLE's actual project layout differs -
-      # I have not verified this against their real source tree.
       - name: Ensure .ipa is not re-compressed by aapt
         run: |
           GRADLE_FILE="android/app/build.gradle"
@@ -40,6 +38,12 @@ jobs:
         run: |
           python3 patches/seed_bundled_app.py \
             android/app/src/main/java/org/radekhle/android/MainActivity.java
+
+      - name: Download Boost headers
+        run: |
+          curl -sSL -o boost.tar.gz "https://archives.boost.io/release/1.81.0/source/boost_1_81_0.tar.gz"
+          mkdir -p vendor/boost
+          tar -xzf boost.tar.gz -C vendor/boost --strip-components=1
 
       - name: Set up JDK
         uses: actions/setup-java@v4
@@ -53,47 +57,46 @@ jobs:
           targets: aarch64-linux-android
 
       - name: Install cargo-ndk
-        run: cargo install cargo-ndk
+        run: cargo install cargo-ndk@3.5.4
 
-      - name: Set up Android NDK
-        uses: nttld/setup-ndk@v1
-        id: setup-ndk
-        with:
-          ndk-version: r25c
+      - name: Download Android NDK
+        run: curl -L -o android-ndk-r25c-linux.zip "https://dl.google.com/android/repository/android-ndk-r25c-linux.zip"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Extract Android NDK
+        run: 7z -oandroid-ndk -snld x android-ndk-r25c-linux.zip
+
+      - name: Link Android NDK into the SDK's managed location
+        run: ln -s "$PWD/android-ndk/android-ndk-r25c" "$ANDROID_SDK_ROOT/ndk/25.2.9519653"
+
+      - name: Download CMake
+        run: curl -L -O "https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-linux-x86_64.tar.gz"
+
+      - name: Extract CMake
+        run: |
+          mkdir -p vendor
+          tar xzf "cmake-3.31.6-linux-x86_64.tar.gz" -C vendor
+          mv vendor/cmake-3.31.6-linux-x86_64 vendor/cmake
 
       - name: Install standalone Gradle
         run: |
-          curl -sSL -o gradle.zip https://services.gradle.org/distributions/gradle-8.11.1-bin.zip
+          curl -sSL -o gradle.zip "https://services.gradle.org/distributions/gradle-8.11.1-bin.zip"
           unzip -q gradle.zip -d /opt
           echo "/opt/gradle-8.11.1/bin" >> $GITHUB_PATH
 
       - name: Write local.properties
-        run: |
-          echo "sdk.dir=$ANDROID_HOME" > android/local.properties
-          echo "ndk.dir=$ANDROID_NDK_HOME" >> android/local.properties
-        env:
-          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: echo "sdk.dir=$ANDROID_SDK_ROOT" > android/local.properties
 
-      - name: Download Boost headers
-        run: |
-          curl -sSL -o boost.tar.gz https://archives.boost.io/release/1.84.0/source/boost_1_84_0.tar.gz
-          mkdir -p vendor/boost
-          tar -xzf boost.tar.gz -C vendor/boost --strip-components=1
-      
       - name: Build APK
         env:
-          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          CMAKE: ${{ github.workspace }}/vendor/cmake/bin/cmake
         run: |
+          export ANDROID_NDK_ROOT="$ANDROID_SDK_ROOT/ndk/25.2.9519653"
           cd android
-          gradle wrapper --gradle-version 8.11.1
-          chmod +x ./gradlew
-          ./gradlew assembleRelease --stacktrace
+          gradle assembleRelease --stacktrace
+          mv app/build/outputs/apk/release/*.apk ../RadekHLE-with-game.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: radekhle-with-game
-          path: android/app/build/outputs/apk/release/*.apk
+          path: RadekHLE-with-game.apk
