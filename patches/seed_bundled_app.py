@@ -1,22 +1,16 @@
 #!/usr/bin/env python3
 """
-Injects a first-run "seed the bundled game into touchHLE_apps" step into
-RadekHLE's real MainActivity.java (org.radekhle.android.MainActivity,
-which extends SDLActivity and has no onCreate override of its own).
-
-Rewritten against the actual source (confirmed 2026-09) rather than a
-decompiled guess. It:
-  1. Adds an onCreate(Bundle) override that seeds the game before calling
-     super.onCreate(...) (native init/game-scan happens inside the SDL
-     base class, so seeding must happen first).
-  2. Reuses the existing private gameFolderTarget() helper already defined
-     in this file instead of duplicating the touchHLE_apps path logic.
+Injects a first-run "seed the bundled game into touchHLE_apps" step, plus a
+getArguments() override to auto-launch it, into RadekHLE's real
+MainActivity.java (org.radekhle.android.MainActivity, which extends
+SDLActivity and has no onCreate override of its own).
 
 Usage: python3 seed_bundled_app.py <path/to/MainActivity.java>
 """
 import sys
 
 CLASS_DECL = "public class MainActivity extends SDLActivity {"
+
 INJECTED_BLOCK = """
     @Override
     protected void onCreate(android.os.Bundle savedInstanceState) {
@@ -75,12 +69,12 @@ def main():
 
     if CLASS_DECL not in content:
         print(
-            "[seed_bundled_app] ERROR: couldn't find the expected class declaration:\n"
-            f"    {CLASS_DECL}\n"
-            "RadekHLE's MainActivity.java may have changed since this script was written. "SDLActivity.java
-            "Open the file, find the class body, and add an onCreate(Bundle) override that "
-            "calls a seeding method before super.onCreate(...) -- see this script's "
-            "INJECTED_BLOCK for the method body to reuse.",
+            "[seed_bundled_app] ERROR: couldn't find the expected class declaration: "
+            + CLASS_DECL
+            + ". RadekHLE's MainActivity.java may have changed since this script was "
+            + "written. Open the file, find the class body, and add an onCreate(Bundle) "
+            + "override that calls a seeding method before super.onCreate(...) -- see "
+            + "this script's INJECTED_BLOCK for the method bodies to reuse.",
             file=sys.stderr,
         )
         sys.exit(2)
