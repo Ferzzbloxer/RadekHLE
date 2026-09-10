@@ -59,7 +59,7 @@ jobs:
         uses: nttld/setup-ndk@v1
         id: setup-ndk
         with:
-          ndk-version: r26d
+          ndk-version: 25.2.9519653
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
