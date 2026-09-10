@@ -1125,6 +1125,18 @@ pub fn host_screen_resolutions() -> Vec<(u32, u32)> {
 /// Query the host display refresh rate. SDL receives this from Android's
 /// Display.getRefreshRate(), so high-refresh devices are not forced to 60 Hz.
 pub fn configure_host_performance(high_performance: bool, force_max_clocks: bool) {
+    #[cfg(target_os = "android")]
+    {
+        let flags = i32::from(high_performance) | (i32::from(force_max_clocks) << 1);
+        let result = unsafe { SDL_AndroidSendMessage(PERFORMANCE_MODE_COMMAND, flags) };
+        if result != 0 {
+            log!(
+                "Native Android performance hint could not be delivered: return code {}",
+                result
+            );
+        }
+    }
+
     if high_performance {
         sdl2::hint::set("SDL_RENDER_VSYNC", "0");
         sdl2::hint::set("SDL_ANDROID_BLOCK_ON_PAUSE", "0");
@@ -3246,6 +3258,8 @@ pub fn open_url(env: &mut Environment, url: &str) -> Result<(), String> {
 
 #[cfg(target_os = "android")]
 const ADD_IPA_COMMAND: u32 = 0x8000;
+#[cfg(target_os = "android")]
+const PERFORMANCE_MODE_COMMAND: u32 = 0x8001;
 
 #[cfg(target_os = "android")]
 unsafe extern "C" {

@@ -20,6 +20,7 @@ public class MainActivity extends SDLActivity {
     private static final int CUSTOM_DRIVER_REQUEST = 4712;
     private static final int ADD_IPA_REQUEST = 4713;
     private static final int ADD_IPA_MESSAGE = 0x8000;
+    private static final int PERFORMANCE_MODE_MESSAGE = 0x8001;
 
     @Override
     protected String[] getLibraries() {
@@ -35,7 +36,24 @@ public class MainActivity extends SDLActivity {
             runOnUiThread(MainActivity::openIpaPicker);
             return true;
         }
+        if (message == PERFORMANCE_MODE_MESSAGE) {
+            int flags = data instanceof Integer ? (Integer) data : 0;
+            runOnUiThread(() -> applyPerformanceMode(flags));
+            return true;
+        }
         return super.onUnhandledMessage(message, data);
+    }
+
+    private void applyPerformanceMode(int flags) {
+        boolean highPerformance = (flags & 1) != 0;
+        boolean maxClocks = (flags & 2) != 0;
+        if (android.os.Build.VERSION.SDK_INT >= 24) {
+            getWindow().setSustainedPerformanceMode(highPerformance || maxClocks);
+        }
+        Log.i(TAG, "Native sustained-performance hint "
+                + ((highPerformance || maxClocks) ? "enabled" : "disabled")
+                + "; max-clocks request=" + maxClocks
+                + " (the device governor remains in control of actual clock rates)");
     }
 
     private static void openIpaPicker() {

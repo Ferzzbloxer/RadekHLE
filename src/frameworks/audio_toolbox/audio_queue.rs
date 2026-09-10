@@ -79,6 +79,7 @@ struct AudioQueueHostObject {
     decoded_buffer_cache: VecDeque<DecodedAudioBuffer>,
     compressed_pending: Vec<u8>,
     compressed_pending_format: Option<u32>,
+    compressed_emitted_pcm_bytes: usize,
     aq_is_running_proc: Option<AudioQueuePropertyListenerProc>,
     aq_is_running_user_data: Option<MutVoidPtr>,
     property_listeners: Vec<(
@@ -235,6 +236,7 @@ fn reuse_audio_queue(
         queue.last_underrun_log = None;
         queue.compressed_pending.clear();
         queue.compressed_pending_format = None;
+        queue.compressed_emitted_pcm_bytes = 0;
         (old_run_loop, std::mem::take(&mut queue.buffers))
     };
 
@@ -340,6 +342,7 @@ pub fn AudioQueueNewOutput(
         decoded_buffer_cache: VecDeque::new(),
         compressed_pending: Vec::new(),
         compressed_pending_format: None,
+        compressed_emitted_pcm_bytes: 0,
         aq_is_running_proc: None,
         aq_is_running_user_data: None,
         property_listeners: Vec::new(),
@@ -1357,19 +1360,7 @@ pub fn decode_buffer(
                     Vec::new(),
                 );
             };
-            let al_format = match decoded.channels {
-                1 => al::AL_FORMAT_MONO16,
-                2 => al::AL_FORMAT_STEREO16,
-                other => {
-                    log!(
-                        "Warning: decode_buffer: MP3/AAC produced unsupported \
-                         channel count {}; downmixing to mono.",
-                        other
-                    );
-                    al::AL_FORMAT_MONO16
-                }
-            };
-            (al_format, decoded.sample_rate as ALsizei, decoded.bytes)
+            normalise_decoded_audio(decoded.bytes, decoded.sample_rate, decoded.channels)
         }
         _ => {
             // Copy values out of the packed struct before formatting to
@@ -1389,9 +1380,46 @@ pub fn decode_buffer(
     }
 }
 
+fn normalise_decoded_audio(
+    data: Vec<u8>,
+    sample_rate: u32,
+    channels: u32,
+) -> (ALenum, ALsizei, Vec<u8>) {
+    let frequency = sample_rate.max(8_000) as ALsizei;
+    match channels {
+        1 => (al::AL_FORMAT_MONO16, frequency, data),
+        2 => (al::AL_FORMAT_STEREO16, frequency, data),
+        0 => (al::AL_FORMAT_MONO16, frequency, Vec::new()),
+        channel_count => {
+            let channel_count = channel_count as usize;
+            let frame_size = channel_count.saturating_mul(2);
+            if frame_size == 0 {
+                return (al::AL_FORMAT_MONO16, frequency, Vec::new());
+            }
+            let frame_count = data.len() / frame_size;
+            let mut downmixed = Vec::with_capacity(frame_count.saturating_mul(2));
+            for frame in data[..frame_count * frame_size].chunks_exact(frame_size) {
+                let mut sum = 0i64;
+                for sample in frame.chunks_exact(2) {
+                    sum += i16::from_le_bytes([sample[0], sample[1]]) as i64;
+                }
+                let sample =
+                    (sum / channel_count as i64).clamp(i16::MIN as i64, i16::MAX as i64) as i16;
+                downmixed.extend_from_slice(&sample.to_le_bytes());
+            }
+            log!(
+                "Audio decoder produced {} channels; downmixed to mono for OpenAL",
+                channel_count
+            );
+            (al::AL_FORMAT_MONO16, frequency, downmixed)
+        }
+    }
+}
+
 fn decode_compressed_buffer(
     pending: &mut Vec<u8>,
     pending_format: &mut Option<u32>,
+    emitted_pcm_bytes: &mut usize,
     mem: &Mem,
     format: &AudioStreamBasicDescription,
     audio_data: MutPtr<u8>,
@@ -1401,6 +1429,7 @@ fn decode_compressed_buffer(
     if *pending_format != Some(format_id) {
         pending.clear();
         *pending_format = Some(format_id);
+        *emitted_pcm_bytes = 0;
     }
     let bytes = mem.bytes_at(audio_data, audio_data_byte_size);
     if bytes.is_empty() {
@@ -1411,6 +1440,22 @@ fn decode_compressed_buffer(
         );
     }
     pending.extend_from_slice(&bytes);
+
+    // Re-decoding the complete prefix keeps frame boundaries intact when a
+    // game splits an MP3 or AAC packet across guest buffers. The previous
+    // implementation discarded the prefix after every successful decode, so
+    // the next buffer began in the middle of a compressed frame and became
+    // silence. Keep the decoded prefix and emit only the newly decoded PCM.
+    const MAX_STREAM_BYTES: usize = 32 * 1024 * 1024;
+    if pending.len() > MAX_STREAM_BYTES {
+        log!(
+            "Warning: compressed AudioQueue stream exceeded {} MiB; restarting its decode window",
+            MAX_STREAM_BYTES / (1024 * 1024)
+        );
+        pending.clear();
+        pending.extend_from_slice(&bytes);
+        *emitted_pcm_bytes = 0;
+    }
     if pending.len() < 64 {
         return (
             fallback_al_format(format),
@@ -1419,40 +1464,30 @@ fn decode_compressed_buffer(
         );
     }
 
-    let input = std::mem::take(pending);
-    let cursor = std::io::Cursor::new(input.clone());
+    let cursor = std::io::Cursor::new(pending.clone());
     let decoded = crate::audio::symphonia_formats::decode_symphonia_to_pcm(cursor);
     match decoded {
         Ok(decoded) if !decoded.bytes.is_empty() => {
-            let al_format = match decoded.channels {
-                1 => al::AL_FORMAT_MONO16,
-                2 => al::AL_FORMAT_STEREO16,
-                other => {
-                    log!(
-                        "Warning: AudioQueue compressed decoder produced {} channels; using mono.",
-                        other
-                    );
-                    al::AL_FORMAT_MONO16
-                }
-            };
-            (al_format, decoded.sample_rate as ALsizei, decoded.bytes)
-        }
-        Ok(_) | Err(_) => {
-            // A guest callback is allowed to split an MP3/AAC frame across
-            // AudioQueueBuffer objects. Keep the bytes until the next callback
-            // instead of turning one split packet into permanent silence.
-            *pending = input;
-            if pending.len() > 2 * 1024 * 1024 {
-                log!("Warning: compressed AudioQueue input exceeded 2 MiB without a decodable frame; dropping the oldest half");
-                let keep_from = pending.len() / 2;
-                pending.drain(..keep_from);
+            let (_, frequency, normalised) =
+                normalise_decoded_audio(decoded.bytes, decoded.sample_rate, decoded.channels);
+            if *emitted_pcm_bytes > normalised.len() {
+                *emitted_pcm_bytes = 0;
             }
-            (
-                fallback_al_format(format),
-                format.sample_rate.max(8_000.0) as ALsizei,
-                Vec::new(),
-            )
+            let start = *emitted_pcm_bytes;
+            *emitted_pcm_bytes = normalised.len();
+            let new_pcm = normalised.get(start..).unwrap_or_default().to_vec();
+            let al_format = if decoded.channels == 1 || decoded.channels > 2 {
+                al::AL_FORMAT_MONO16
+            } else {
+                al::AL_FORMAT_STEREO16
+            };
+            (al_format, frequency, new_pcm)
         }
+        Ok(_) | Err(_) => (
+            fallback_al_format(format),
+            format.sample_rate.max(8_000.0) as ALsizei,
+            Vec::new(),
+        ),
     }
 }
 
@@ -1760,6 +1795,7 @@ fn prime_audio_queue(env: &mut Environment, in_aq: AudioQueueRef) {
             decode_compressed_buffer(
                 &mut host_object.compressed_pending,
                 &mut host_object.compressed_pending_format,
+                &mut host_object.compressed_emitted_pcm_bytes,
                 &env.mem,
                 &host_object.format,
                 next_buffer.audio_data.cast(),
@@ -2604,6 +2640,7 @@ fn AudioQueueReset(env: &mut Environment, in_aq: AudioQueueRef) -> OSStatus {
     host_object.decoded_buffer_cache.clear();
     host_object.compressed_pending.clear();
     host_object.compressed_pending_format = None;
+    host_object.compressed_emitted_pcm_bytes = 0;
 
     0 // success
 }
@@ -2787,6 +2824,7 @@ pub fn AudioQueueNewInput(
         decoded_buffer_cache: VecDeque::new(),
         compressed_pending: Vec::new(),
         compressed_pending_format: None,
+        compressed_emitted_pcm_bytes: 0,
         aq_is_running_proc: None,
         aq_is_running_user_data: None,
         property_listeners: Vec::new(),

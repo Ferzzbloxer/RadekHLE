@@ -513,7 +513,7 @@ impl Default for Options {
             arm64_backend: Arm64Backend::Interpreter,
             arm64_fallback: Arm64Fallback::Interpreter,
             llvmpipe_fallback: false,
-            metal_translator: true,
+            metal_translator: false,
             gdb_listen_addrs: None,
             preferred_languages: None,
             headless: false,
@@ -1181,8 +1181,8 @@ mod tests {
     }
 
     #[test]
-    fn metal_translator_is_enabled_by_default() {
-        assert!(Options::default().metal_translator);
+    fn metal_translator_is_disabled_by_default() {
+        assert!(!Options::default().metal_translator);
     }
 
     #[test]
@@ -1232,7 +1232,7 @@ mod tests {
     fn default_graphics_api_does_not_enable_a_translator() {
         let options = Options::default();
         assert_eq!(options.graphics_api, GraphicsApi::Default);
-        assert!(options.metal_translator);
+        assert!(!options.metal_translator);
     }
 
     #[test]

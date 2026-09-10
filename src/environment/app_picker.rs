@@ -1104,7 +1104,7 @@ fn app_picker_inner(
     let mut quick_options_arm64_backend = crate::options::Arm64Backend::Interpreter;
     let mut quick_options_arm64_fallback = crate::options::Arm64Fallback::Interpreter;
     let mut quick_options_llvmpipe_fallback = false;
-    let mut quick_options_metal_translator = true;
+    let mut quick_options_metal_translator = false;
     let mut quick_options_software_rendering = false;
     let mut quick_options_custom_driver = false;
     let mut quick_options_anisotropic_filtering = 1u8;
@@ -3273,7 +3273,7 @@ fn setup_quick_options(
         RowKind::Label("LLVMPipe fallback"),
         RowKind::Switch("llvmpipeFallback:", false),
         RowKind::Label("Metal translator (ARM64)"),
-        RowKind::Switch("metalTranslator:", true),
+        RowKind::Switch("metalTranslator:", false),
         RowKind::Label("Game folder"),
         RowKind::Buttons(&[
             ("Open folder", "openFileManager"),
@@ -3902,6 +3902,8 @@ fn animate_picker_panel(env: &mut Environment, panel: id, visible: bool) {
     if panel == nil {
         return;
     }
+
+    let layer: id = msg![env; panel layer];
     let key_path = ns_string::get_static_str(env, "opacity");
     let animation: id = msg_class![env; CABasicAnimation animationWithKeyPath:key_path];
     let from_alpha: f32 = if visible { 0.0 } else { 1.0 };
@@ -3910,27 +3912,28 @@ fn animate_picker_panel(env: &mut Environment, panel: id, visible: bool) {
     let to_value: id = msg_class![env; NSNumber numberWithFloat:to_alpha];
     () = msg![env; animation setFromValue:from_value];
     () = msg![env; animation setToValue:to_value];
-    () = msg![env; animation setDuration:(0.16_f64)];
+    () = msg![env; animation setDuration:(0.18_f64)];
     () = msg![env; animation setRemovedOnCompletion:true];
+
+    // Keep the model layer at the animation's start value until the explicit
+    // animation is installed. The old order set alpha to zero before adding
+    // the hide animation, which exposed the coloured picker backing view for
+    // one compositor pass and produced the pink flash on close.
+    () = msg![env; panel setHidden:false];
     () = msg![env; panel setUserInteractionEnabled:visible];
-    if visible {
-        () = msg![env; panel setHidden:false];
-        () = msg![env; panel setAlpha:(1.0 as CGFloat)];
-    } else {
-        () = msg![env; panel setAlpha:(0.0 as CGFloat)];
-    }
-    let layer: id = msg![env; panel layer];
+    () = msg![env; panel setAlpha:(from_alpha as CGFloat)];
     () = msg![env; layer addAnimation:animation forKey:key_path];
+    () = msg![env; panel setAlpha:(to_alpha as CGFloat)];
 
     let transform_key = ns_string::get_static_str(env, "transform.scale");
     let transform: id = msg_class![env; CABasicAnimation animationWithKeyPath:transform_key];
-    let from_scale = if visible { 0.96_f32 } else { 1.0_f32 };
-    let to_scale = if visible { 1.0_f32 } else { 0.96_f32 };
+    let from_scale = if visible { 0.94_f32 } else { 1.0_f32 };
+    let to_scale = if visible { 1.0_f32 } else { 0.94_f32 };
     let from_scale_value: id = msg_class![env; NSNumber numberWithFloat:from_scale];
     let to_scale_value: id = msg_class![env; NSNumber numberWithFloat:to_scale];
     () = msg![env; transform setFromValue:from_scale_value];
     () = msg![env; transform setToValue:to_scale_value];
-    () = msg![env; transform setDuration:(0.18_f64)];
+    () = msg![env; transform setDuration:(0.2_f64)];
     () = msg![env; transform setRemovedOnCompletion:true];
     () = msg![env; layer addAnimation:transform forKey:transform_key];
     release(env, transform_key);
