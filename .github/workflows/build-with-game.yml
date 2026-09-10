@@ -76,6 +76,12 @@ jobs:
           echo "ndk.dir=$ANDROID_NDK_HOME" >> android/local.properties
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+
+      - name: Download Boost headers
+        run: |
+          curl -sSL -o boost.tar.gz https://archives.boost.io/release/1.84.0/source/boost_1_84_0.tar.gz
+          mkdir -p vendor/boost
+          tar -xzf boost.tar.gz -C vendor/boost --strip-components=1
       
       - name: Build APK
         env:
