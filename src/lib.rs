@@ -466,6 +466,7 @@ pub fn main<T: Iterator<Item = String>>(mut args: T) -> Result<(), String> {
     }
     let display_rate = options.fps_limit.unwrap_or(60.0);
     options.apply_power_profile(display_rate);
+    window::configure_host_performance(options.high_performance, options.force_max_clocks);
     crate::log::set_file_logging(options.log_file);
     if options.core_audio {
         unsafe {

@@ -1124,6 +1124,45 @@ pub fn host_screen_resolutions() -> Vec<(u32, u32)> {
 
 /// Query the host display refresh rate. SDL receives this from Android's
 /// Display.getRefreshRate(), so high-refresh devices are not forced to 60 Hz.
+pub fn configure_host_performance(high_performance: bool, force_max_clocks: bool) {
+    if high_performance {
+        sdl2::hint::set("SDL_RENDER_VSYNC", "0");
+        sdl2::hint::set("SDL_ANDROID_BLOCK_ON_PAUSE", "0");
+        unsafe {
+            std::env::set_var("TOUCHHLE_HIGH_PERFORMANCE", "1");
+        }
+        #[cfg(unix)]
+        {
+            let result = unsafe { libc::setpriority(libc::PRIO_PROCESS, 0, -10) };
+            if result == 0 {
+                log!("High performance mode: raised the emulator process priority");
+            } else {
+                log!(
+                    "High performance mode: host denied process-priority adjustment: {}",
+                    std::io::Error::last_os_error()
+                );
+            }
+        }
+        #[cfg(not(unix))]
+        log!("High performance mode: disabled emulator-side pacing");
+    } else {
+        unsafe {
+            std::env::remove_var("TOUCHHLE_HIGH_PERFORMANCE");
+        }
+    }
+
+    if force_max_clocks {
+        unsafe {
+            std::env::set_var("TOUCHHLE_FORCE_MAX_CLOCKS", "1");
+        }
+        log!("Force max clocks requested: using the best-effort host performance hint; clock governors remain controlled by the OS");
+    } else {
+        unsafe {
+            std::env::remove_var("TOUCHHLE_FORCE_MAX_CLOCKS");
+        }
+    }
+}
+
 pub fn host_refresh_rate() -> Option<f64> {
     let sdl_ctx = sdl2::init().ok()?;
     let video_ctx = sdl_ctx.video().ok()?;
@@ -1245,9 +1284,14 @@ impl Window {
             crate::gles::configure_custom_driver(options.custom_driver.as_deref());
         crate::gles::configure_angle_driver(options.angle_driver && !custom_driver_active);
         let llvmpipe_active = crate::gles::configure_llvmpipe_fallback(
-            options.llvmpipe_fallback && !custom_driver_active,
+            (options.llvmpipe_fallback || options.software_rendering) && !custom_driver_active,
         );
-        let software_presentation = options.software_rendering || options.software_presentation;
+        let native_cpu_renderer = options.software_rendering && llvmpipe_active;
+        let software_presentation =
+            (options.software_rendering || options.software_presentation) && !native_cpu_renderer;
+        if native_cpu_renderer {
+            log!("Software rendering selected: using the host's native LLVMPipe CPU rasterizer instead of the built-in fallback");
+        }
         let frame_generation = options.frame_generation && !software_presentation;
         let rtcs = options.rtcs;
         if options.frame_generation && software_presentation {
@@ -1271,6 +1315,9 @@ impl Window {
         // (https://github.com/libsdl-org/SDL/issues/7479). Once that's fixed,
         // remove this (https://github.com/touchHLE/touchHLE/issues/85).
         sdl2::hint::set("SDL_JOYSTICK_HIDAPI", "0");
+        if options.high_performance {
+            sdl2::hint::set("SDL_RENDER_VSYNC", "0");
+        }
 
         if env::consts::OS == "android" && !software_presentation {
             // SDL needs the host context profile before creating the window.

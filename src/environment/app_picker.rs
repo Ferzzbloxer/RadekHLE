@@ -324,6 +324,8 @@ struct AppPickerDelegateHostObject {
     battery_saver: Option<bool>,
     ultra_battery_saver: Option<bool>,
     frame_generation: Option<bool>,
+    high_performance: Option<bool>,
+    force_max_clocks: Option<bool>,
     fullscreen: Option<bool>,
     fullscreen_stretched: Option<bool>,
     angle_driver: Option<bool>,
@@ -625,6 +627,14 @@ const CLASSES: ClassExports = objc_classes! {
 - (())lowAudioQuality:(id)switch {
     let switch_state: bool = msg![env; switch isOn];
     env.objc.borrow_mut::<AppPickerDelegateHostObject>(this).low_audio_quality = Some(switch_state);
+}
+- (())highPerformance:(id)switch {
+    let switch_state: bool = msg![env; switch isOn];
+    env.objc.borrow_mut::<AppPickerDelegateHostObject>(this).high_performance = Some(switch_state);
+}
+- (())forceMaxClocks:(id)switch {
+    let switch_state: bool = msg![env; switch isOn];
+    env.objc.borrow_mut::<AppPickerDelegateHostObject>(this).force_max_clocks = Some(switch_state);
 }
 
 - (())arm64Backend:(id)switch {
@@ -1065,6 +1075,8 @@ fn app_picker_inner(
     let mut quick_options_frame_pacing = true;
     let mut quick_options_fps_limit: Option<f64> = None;
     let mut quick_options_frame_generation = false;
+    let mut quick_options_high_performance = false;
+    let mut quick_options_force_max_clocks = false;
     let mut quick_options_vsync = false;
     let mut quick_options_battery_saver = false;
     let mut quick_options_ultra_battery_saver = false;
@@ -1829,6 +1841,16 @@ fn app_picker_inner(
         } else if let Some(enabled) = std::mem::take(&mut host_obj.frame_generation) {
             quick_options_frame_generation = enabled;
             () = msg![env; (quick_options_stuff.frame_generation_switch) setOn:enabled];
+        } else if let Some(enabled) = std::mem::take(&mut host_obj.high_performance) {
+            quick_options_high_performance = enabled;
+            if !enabled {
+                quick_options_force_max_clocks = false;
+            }
+        } else if let Some(enabled) = std::mem::take(&mut host_obj.force_max_clocks) {
+            quick_options_force_max_clocks = enabled;
+            if enabled {
+                quick_options_high_performance = true;
+            }
         } else if let Some(fullscreen) = std::mem::take(&mut host_obj.fullscreen) {
             quick_options_fullscreen = match fullscreen {
                 false => None,
@@ -2034,6 +2056,22 @@ fn app_picker_inner(
             "--frame-generation"
         } else {
             "--disable-frame-generation"
+        }
+        .to_string(),
+    );
+    option_args.push(
+        if quick_options_high_performance {
+            "--high-performance"
+        } else {
+            "--disable-high-performance"
+        }
+        .to_string(),
+    );
+    option_args.push(
+        if quick_options_force_max_clocks {
+            "--force-max-clocks"
+        } else {
+            "--disable-force-max-clocks"
         }
         .to_string(),
     );
@@ -3174,6 +3212,10 @@ fn setup_quick_options(
         RowKind::Switch("lowAudioQuality:", false),
         RowKind::Label("Graphics API"),
         RowKind::GraphicsApiDropdown,
+        RowKind::Label("High performance mode"),
+        RowKind::Switch("highPerformance:", false),
+        RowKind::Label("Force max clocks (Adreno)"),
+        RowKind::Switch("forceMaxClocks:", false),
         RowKind::Label("Shader compatibility fixes"),
         RowKind::Switch("shaderCompatibilityFixes:", true),
         RowKind::Label("Fix incomplete textures"),
@@ -3224,7 +3266,7 @@ fn setup_quick_options(
         RowKind::Switch("ultraBatterySaver:", false),
         RowKind::Label("Memory management"),
         RowKind::MemoryManagementDropdown,
-        RowKind::Label("Dynarmic JIT"),
+        RowKind::Label("ARM64 JIT (off = interpreter)"),
         RowKind::Switch("arm64Backend:", false),
         RowKind::Label("Interpreter fallback"),
         RowKind::Switch("arm64Fallback:", false),
@@ -3879,6 +3921,19 @@ fn animate_picker_panel(env: &mut Environment, panel: id, visible: bool) {
     }
     let layer: id = msg![env; panel layer];
     () = msg![env; layer addAnimation:animation forKey:key_path];
+
+    let transform_key = ns_string::get_static_str(env, "transform.scale");
+    let transform: id = msg_class![env; CABasicAnimation animationWithKeyPath:transform_key];
+    let from_scale = if visible { 0.96_f32 } else { 1.0_f32 };
+    let to_scale = if visible { 1.0_f32 } else { 0.96_f32 };
+    let from_scale_value: id = msg_class![env; NSNumber numberWithFloat:from_scale];
+    let to_scale_value: id = msg_class![env; NSNumber numberWithFloat:to_scale];
+    () = msg![env; transform setFromValue:from_scale_value];
+    () = msg![env; transform setToValue:to_scale_value];
+    () = msg![env; transform setDuration:(0.18_f64)];
+    () = msg![env; transform setRemovedOnCompletion:true];
+    () = msg![env; layer addAnimation:transform forKey:transform_key];
+    release(env, transform_key);
     release(env, key_path);
 }
 

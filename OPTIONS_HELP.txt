@@ -410,6 +410,18 @@ Other options:
     --disable-frame-generation
         Disable display-frame generation.
 
+    --high-performance / --disable-high-performance
+        Disable emulator-side pacing, vsync, and battery caps so the host can
+        run the renderer and guest as fast as practical. This is a scheduling
+        and pacing request; it cannot force an Android device to use 100% CPU
+        or GPU clocks.
+
+    --force-max-clocks / --disable-force-max-clocks
+        Request the host's best-effort maximum-performance hint. On Android the
+        setting is passed to the host performance layer where available, but
+        clock governors remain controlled by the operating system and device.
+        Enabling it also enables high-performance mode.
+
     --rtcs / --disable-rtcs
         Enable or disable the safe visual-only accelerating corruption effect.
         Off by default; it never writes guest memory or changes game logic.

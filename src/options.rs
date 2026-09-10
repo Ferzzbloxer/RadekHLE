@@ -406,6 +406,10 @@ pub struct Options {
     pub ultra_battery_saver: bool,
     /// Generate presentation frames up to the host display refresh rate. Disabled by default.
     pub frame_generation: bool,
+    /// Disable emulation throttles and request the highest practical host scheduling priority.
+    pub high_performance: bool,
+    /// Ask the host platform for a best-effort maximum-performance GPU/CPU hint.
+    pub force_max_clocks: bool,
     /// Apply a safe, visual-only accelerating corruption effect to presented frames.
     pub rtcs: bool,
     pub force_composition: bool,
@@ -520,6 +524,8 @@ impl Default for Options {
             battery_saver: false,
             ultra_battery_saver: false,
             frame_generation: false,
+            high_performance: false,
+            force_max_clocks: false,
             rtcs: false,
             force_composition: false,
             prefer_gles2_context: false,
@@ -854,6 +860,16 @@ impl Options {
             self.frame_generation = true;
         } else if arg == "--disable-frame-generation" || arg == "--frame-generation=off" {
             self.frame_generation = false;
+        } else if arg == "--high-performance" || arg == "--high-performance=on" {
+            self.high_performance = true;
+        } else if arg == "--disable-high-performance" || arg == "--high-performance=off" {
+            self.high_performance = false;
+            self.force_max_clocks = false;
+        } else if arg == "--force-max-clocks" || arg == "--force-max-clocks=on" {
+            self.high_performance = true;
+            self.force_max_clocks = true;
+        } else if arg == "--disable-force-max-clocks" || arg == "--force-max-clocks=off" {
+            self.force_max_clocks = false;
         } else if arg == "--rtcs" || arg == "--rtcs=on" {
             self.rtcs = true;
         } else if arg == "--disable-rtcs" || arg == "--rtcs=off" {
@@ -958,10 +974,20 @@ impl Options {
     }
 
     pub fn frame_pacing_enabled(&self) -> bool {
-        self.frame_pacing || self.vsync || self.battery_saver || self.ultra_battery_saver
+        !self.high_performance
+            && (self.frame_pacing || self.vsync || self.battery_saver || self.ultra_battery_saver)
     }
 
     pub fn apply_power_profile(&mut self, display_rate: f64) {
+        if self.high_performance {
+            self.battery_saver = false;
+            self.ultra_battery_saver = false;
+            self.vsync = false;
+            self.frame_pacing = false;
+            self.frame_generation = false;
+            self.fps_limit = None;
+            return;
+        }
         if !self.ultra_battery_saver {
             return;
         }
@@ -1050,6 +1076,33 @@ fn parse_dump_options(options: &str) -> Result<DumpingOptions, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn high_performance_disables_frame_throttling() {
+        let mut options = Options::default();
+        options.parse_argument("--high-performance").unwrap();
+        assert!(options.high_performance);
+        options.frame_pacing = true;
+        options.vsync = true;
+        options.fps_limit = Some(30.0);
+        options.apply_power_profile(60.0);
+        assert!(!options.frame_pacing_enabled());
+        assert!(!options.vsync);
+        assert_eq!(options.fps_limit, None);
+    }
+
+    #[test]
+    fn force_max_clocks_implies_high_performance() {
+        let mut options = Options::default();
+        options.parse_argument("--force-max-clocks").unwrap();
+        assert!(options.high_performance);
+        assert!(options.force_max_clocks);
+    }
+
+    #[test]
+    fn interpreter_is_the_arm64_default() {
+        assert_eq!(Options::default().arm64_backend, Arm64Backend::Interpreter);
+    }
 
     #[test]
     fn parses_render_rotation_values_without_changing_orientation() {

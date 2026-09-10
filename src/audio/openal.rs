@@ -80,7 +80,7 @@ fn ensure_openal_backend_available() {
                 std::env::set_var("ALSOFT_MIXER_THREADS", "1");
             }
             if std::env::var_os("ALSOFT_BUFFER_SIZE").is_none() {
-                std::env::set_var("ALSOFT_BUFFER_SIZE", "1024");
+                std::env::set_var("ALSOFT_BUFFER_SIZE", "2048");
             }
         }
     }
@@ -139,7 +139,7 @@ fn ensure_openal_backend_available() {
     unsafe {
         std::env::set_var("ALSOFT_DRIVERS", "null");
         if std::env::var_os("ALSOFT_BUFFER_SIZE").is_none() {
-            std::env::set_var("ALSOFT_BUFFER_SIZE", "1024");
+            std::env::set_var("ALSOFT_BUFFER_SIZE", "2048");
         }
     }
 }
