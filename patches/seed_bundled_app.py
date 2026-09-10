@@ -17,7 +17,6 @@ Usage: python3 seed_bundled_app.py <path/to/MainActivity.java>
 import sys
 
 CLASS_DECL = "public class MainActivity extends SDLActivity {"
-
 INJECTED_BLOCK = """
     @Override
     protected void onCreate(android.os.Bundle savedInstanceState) {
@@ -26,8 +25,8 @@ INJECTED_BLOCK = """
     }
 
     // --- injected by seed_bundled_app.py: bundle a fixed game into touchHLE_apps ---
-    private static void seedBundledAppIfNeeded() {
-        File target = gameFolderTarget();
+    private void seedBundledAppIfNeeded() {
+        File target = new File(getExternalFilesDir(null), "touchHLE_apps");
         if (!target.exists() && !target.mkdirs()) {
             Log.e(TAG, "Couldn't create game folder: " + target);
             return;
@@ -36,7 +35,7 @@ INJECTED_BLOCK = """
         if (dest.exists()) {
             return;
         }
-        try (InputStream input = getContext().getAssets().open("game.ipa");
+        try (InputStream input = getAssets().open("game.ipa");
              OutputStream output = new FileOutputStream(dest)) {
             byte[] buffer = new byte[1024 * 1024];
             int count;
