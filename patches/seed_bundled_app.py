@@ -47,6 +47,15 @@ INJECTED_BLOCK = """
             Log.e(TAG, "Couldn't seed bundled game", ex);
         }
     }
+
+    @Override
+    protected String[] getArguments() {
+        File game = new File(new File(getExternalFilesDir(null), "touchHLE_apps"), "game.ipa");
+        if (game.exists()) {
+            return new String[]{ game.getAbsolutePath() };
+        }
+        return super.getArguments();
+    }
     // --- end injected block ---
 """
 
@@ -68,7 +77,7 @@ def main():
         print(
             "[seed_bundled_app] ERROR: couldn't find the expected class declaration:\n"
             f"    {CLASS_DECL}\n"
-            "RadekHLE's MainActivity.java may have changed since this script was written. "
+            "RadekHLE's MainActivity.java may have changed since this script was written. "SDLActivity.java
             "Open the file, find the class body, and add an onCreate(Bundle) override that "
             "calls a seeding method before super.onCreate(...) -- see this script's "
             "INJECTED_BLOCK for the method body to reuse.",
