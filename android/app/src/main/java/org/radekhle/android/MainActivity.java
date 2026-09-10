@@ -145,10 +145,12 @@ public class MainActivity extends SDLActivity {
                 Log.e(TAG, "Couldn't replace partial imported game file: " + temporary);
                 return false;
             }
-            try (OutputStream output = new FileOutputStream(temporary)) {
+            try (FileOutputStream output = new FileOutputStream(temporary)) {
                 byte[] buffer = new byte[1024 * 1024];
                 int count;
                 while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+                output.flush();
+                output.getFD().sync();
             }
             if (destination.exists() && !destination.delete()) {
                 Log.e(TAG, "Couldn't replace imported game file: " + destination);
@@ -222,10 +224,12 @@ public class MainActivity extends SDLActivity {
         try (InputStream input = getContext().getContentResolver().openInputStream(uri)) {
             if (input == null) return false;
             if (temporary.exists() && !temporary.delete()) return false;
-            try (OutputStream output = new FileOutputStream(temporary)) {
+            try (FileOutputStream output = new FileOutputStream(temporary)) {
                 byte[] buffer = new byte[1024 * 1024];
                 int count;
                 while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+                output.flush();
+                output.getFD().sync();
             }
             if (destination.exists() && !destination.delete()) {
                 temporary.delete();

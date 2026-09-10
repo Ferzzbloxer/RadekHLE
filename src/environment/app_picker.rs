@@ -142,22 +142,36 @@ fn enumerate_apps(apps_dir: &Path) -> Result<Vec<AppInfo>, std::io::Error> {
     Ok(apps)
 }
 
-fn list_top_level_ipa_files(apps_dir: &Path) -> Vec<(String, u64)> {
+fn list_top_level_ipa_files(apps_dir: &Path) -> Vec<(String, u64, u128)> {
     let mut files = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(apps_dir) {
+    let mut directories = vec![apps_dir.to_path_buf()];
+    while let Some(directory) = directories.pop() {
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("ipa"))
-            {
+            let is_directory = entry.file_type().is_ok_and(|file_type| file_type.is_dir());
+            let is_game_entry = path.extension().is_some_and(|ext| {
+                ext.eq_ignore_ascii_case("ipa") || ext.eq_ignore_ascii_case("app")
+            });
+            if is_game_entry {
+                let Ok(metadata) = entry.metadata() else {
+                    continue;
+                };
+                let modified = metadata
+                    .modified()
+                    .ok()
+                    .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map_or(0, |duration| duration.as_nanos());
                 let name = path
-                    .file_name()
-                    .unwrap_or_default()
+                    .strip_prefix(apps_dir)
+                    .unwrap_or(&path)
                     .to_string_lossy()
                     .into_owned();
-                let size = entry.metadata().map(|metadata| metadata.len()).unwrap_or(0);
-                files.push((name, size));
+                files.push((name, metadata.len(), modified));
+            } else if is_directory {
+                directories.push(path);
             }
         }
     }
@@ -166,7 +180,7 @@ fn list_top_level_ipa_files(apps_dir: &Path) -> Vec<(String, u64)> {
 }
 
 struct IpaWatch {
-    last_seen: Vec<(String, u64)>,
+    last_seen: Vec<(String, u64, u128)>,
     dirty: bool,
     last_change: Option<Instant>,
 }
@@ -1104,7 +1118,7 @@ fn app_picker_inner(
     let mut quick_options_arm64_backend = crate::options::Arm64Backend::Interpreter;
     let mut quick_options_arm64_fallback = crate::options::Arm64Fallback::Interpreter;
     let mut quick_options_llvmpipe_fallback = false;
-    let mut quick_options_metal_translator = false;
+    let mut quick_options_metal_translator = cfg!(target_arch = "aarch64");
     let mut quick_options_software_rendering = false;
     let mut quick_options_custom_driver = false;
     let mut quick_options_anisotropic_filtering = 1u8;

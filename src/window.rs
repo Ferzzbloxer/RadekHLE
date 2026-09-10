@@ -1228,8 +1228,9 @@ pub struct Window {
     controllers: Vec<sdl2::controller::GameController>,
     dpad_state: DpadState,
     stick_active: bool,
-    _sensor_ctx: sdl2::SensorSubsystem,
+    sensor_ctx: sdl2::SensorSubsystem,
     accelerometer: Option<sdl2::sensor::Sensor>,
+    gyroscope: Option<sdl2::sensor::Sensor>,
     virtual_cursor_last: Option<(f32, f32, bool, bool)>,
     virtual_cursor_last_unsticky: Option<(f32, f32, Instant)>,
     virtual_accelerometer_last: Option<(f32, f32, bool)>,
@@ -1442,14 +1443,33 @@ impl Window {
 
         let sensor_ctx = sdl_ctx.sensor().unwrap();
         let mut accelerometer: Option<sdl2::sensor::Sensor> = None;
+        let mut gyroscope: Option<sdl2::sensor::Sensor> = None;
         if let Ok(num_sensors) = sensor_ctx.num_sensors() {
             for sensor_idx in 0..num_sensors {
-                if let Ok(sensor) = sensor_ctx.open(sensor_idx) {
-                    if sensor.sensor_type() == sdl2::sensor::SensorType::Accelerometer {
+                let Ok(sensor) = sensor_ctx.open(sensor_idx) else {
+                    continue;
+                };
+                match sensor.sensor_type() {
+                    sdl2::sensor::SensorType::Accelerometer
+                    | sdl2::sensor::SensorType::LeftAccelerometer
+                    | sdl2::sensor::SensorType::RightAccelerometer
+                        if accelerometer.is_none() =>
+                    {
                         log!("Accelerometer detected: {}.", sensor.name());
                         accelerometer = Some(sensor);
-                        break;
                     }
+                    sdl2::sensor::SensorType::Gyroscope
+                    | sdl2::sensor::SensorType::LeftGyroscope
+                    | sdl2::sensor::SensorType::RightGyroscope
+                        if gyroscope.is_none() =>
+                    {
+                        log!("Gyroscope detected: {}.", sensor.name());
+                        gyroscope = Some(sensor);
+                    }
+                    _ => {}
+                }
+                if accelerometer.is_some() && gyroscope.is_some() {
+                    break;
                 }
             }
         }
@@ -1503,8 +1523,9 @@ impl Window {
                 active: false,
             },
             stick_active: false,
-            _sensor_ctx: sensor_ctx,
+            sensor_ctx,
             accelerometer,
+            gyroscope,
             virtual_cursor_last: None,
             virtual_cursor_last_unsticky: None,
             virtual_accelerometer_last: None,
@@ -2248,9 +2269,42 @@ impl Window {
         }
     }
 
+    /// Return whether SDL exposed a native gyroscope for the host device.
+    pub fn has_gyroscope(&self) -> bool {
+        self.gyroscope.is_some()
+    }
+
+    /// Get native gyroscope angular velocity in radians per second using the
+    /// host device's SDL sensor. A missing or temporarily unavailable sensor
+    /// is reported as stationary instead of breaking the guest motion APIs.
+    pub fn get_gyroscope(&self) -> (f32, f32, f32) {
+        self.sensor_ctx.update();
+        let Some(gyroscope) = self.gyroscope.as_ref() else {
+            return (0.0, 0.0, 0.0);
+        };
+        match gyroscope.get_data() {
+            Ok(sdl2::sensor::SensorData::Gyro([x, y, z])) => (x, y, z),
+            Ok(data) => {
+                log_once_fmt!(
+                    "Warning: gyroscope sensor returned non-gyro data ({:?}); reporting zero rotation",
+                    data
+                );
+                (0.0, 0.0, 0.0)
+            }
+            Err(error) => {
+                log_once_fmt!(
+                    "Warning: native gyroscope read failed ({}); reporting zero rotation",
+                    error
+                );
+                (0.0, 0.0, 0.0)
+            }
+        }
+    }
+
     /// Get the real or simulated accelerometer output.
     /// See also [crate::frameworks::uikit::ui_accelerometer].
     pub fn get_acceleration(&self, options: &Options) -> (f32, f32, f32) {
+        self.sensor_ctx.update();
         if self.controllers.is_empty() || !options.analog_stick_tilt_controls {
             if let Some(ref accelerometer) = self.accelerometer {
                 let data = accelerometer.get_data().unwrap();
@@ -2725,45 +2779,54 @@ impl Window {
     ) {
         if self.frame_generation {
             if let Some(mut wgpu) = self.wgpu_presentation.take() {
-                let result = wgpu.present_interpolated(
+                match wgpu.present_interpolated(
                     &pixels,
                     width,
                     height,
                     bottom_up,
                     self.display_refresh_rate,
-                );
-                if let Err(error) = result {
-                    log!("WGPU frame generation failed; presenting the source frame: {error}");
-                    self.frame_generation = false;
-                    self.frame_generation_state.previous = None;
-                    self.frame_generation_state.last_frame_at = None;
-                    if let Err(fallback_error) =
-                        wgpu.present_pixels(&pixels, width, height, bottom_up)
-                    {
-                        log!("WGPU fallback presentation failed: {fallback_error}");
+                ) {
+                    Ok(()) => {
+                        self.wgpu_presentation = Some(wgpu);
+                        return;
+                    }
+                    Err(error) => {
+                        log!("WGPU frame generation failed; presenting the source frame: {error}");
+                        self.frame_generation = false;
+                        self.frame_generation_state.previous = None;
+                        self.frame_generation_state.last_frame_at = None;
+                        match wgpu.present_pixels(&pixels, width, height, bottom_up) {
+                            Ok(()) => {
+                                self.wgpu_presentation = Some(wgpu);
+                                return;
+                            }
+                            Err(fallback_error) => {
+                                log!("WGPU fallback presentation failed; dropping the WGPU path and returning to SDL: {fallback_error}");
+                            }
+                        }
                     }
                 }
-                self.wgpu_presentation = Some(wgpu);
             } else {
                 log_once!("GPU frame generation unavailable; disabling interpolation and presenting source frames only");
                 self.frame_generation = false;
                 self.frame_generation_state.previous = None;
                 self.frame_generation_state.last_frame_at = None;
             }
-            if !self.frame_generation {
-                self.present_native_frame_prepared(pixels, width, height, bottom_up);
-            }
-            return;
         }
         if let Some(mut wgpu) = self.wgpu_presentation.take() {
-            if let Err(error) = wgpu.present_pixels(&pixels, width, height, bottom_up) {
-                log!("WGPU presentation failed: {error}");
+            match wgpu.present_pixels(&pixels, width, height, bottom_up) {
+                Ok(()) => {
+                    self.wgpu_presentation = Some(wgpu);
+                    return;
+                }
+                Err(error) => {
+                    log!("WGPU presentation failed; returning to the SDL swap path: {error}");
+                }
             }
-            self.wgpu_presentation = Some(wgpu);
-            return;
         }
         self.frame_generation_state.previous = None;
         self.frame_generation_state.last_frame_at = None;
+        self.wgpu_presentation = None;
         self.window.gl_swap_window();
     }
 

@@ -513,7 +513,7 @@ impl Default for Options {
             arm64_backend: Arm64Backend::Interpreter,
             arm64_fallback: Arm64Fallback::Interpreter,
             llvmpipe_fallback: false,
-            metal_translator: false,
+            metal_translator: cfg!(target_arch = "aarch64"),
             gdb_listen_addrs: None,
             preferred_languages: None,
             headless: false,
@@ -1181,8 +1181,11 @@ mod tests {
     }
 
     #[test]
-    fn metal_translator_is_disabled_by_default() {
-        assert!(!Options::default().metal_translator);
+    fn metal_translator_defaults_to_the_arm64_compatibility_path() {
+        assert_eq!(
+            Options::default().metal_translator,
+            cfg!(target_arch = "aarch64")
+        );
     }
 
     #[test]

@@ -295,10 +295,21 @@ impl GLES1to2Logger {
 
     pub fn log_error(&self, error: u32) {
         if enabled() {
+            let error_name = match error {
+                gl::NO_ERROR => "GL_NO_ERROR",
+                gl::INVALID_ENUM => "GL_INVALID_ENUM",
+                gl::INVALID_VALUE => "GL_INVALID_VALUE",
+                gl::INVALID_OPERATION => "GL_INVALID_OPERATION",
+                gl::OUT_OF_MEMORY => "GL_OUT_OF_MEMORY",
+                _ => "UNKNOWN_GL_ERROR",
+            };
             log!(
-                "[GLES1→GLES2 PIPELINE] op={} gl_error=0x{:x}",
+                "[GLES1→GLES2 PIPELINE] op={} name={} context={} gl_error=0x{:x} ({})",
                 self.operation_id,
-                error
+                self.operation_name,
+                self.context,
+                error,
+                error_name
             );
         }
     }

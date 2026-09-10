@@ -85,8 +85,8 @@ fn configure_surface(
 impl WgpuPresentation {
     pub fn new(window: &sdl2::video::Window) -> Result<Self, String> {
         let (backends, use_surface) = if cfg!(target_os = "android") {
-            log!("WGPU Android presentation uses an offscreen Vulkan/GL target; SDL retains ownership of the Android EGL window");
-            (wgpu::Backends::VULKAN | wgpu::Backends::GL, false)
+            log!("WGPU Android presentation will try the native window surface first; GLES remains the fallback if the device rejects it");
+            (wgpu::Backends::VULKAN | wgpu::Backends::GL, true)
         } else {
             (
                 wgpu::Backends::VULKAN
@@ -105,9 +105,8 @@ impl WgpuPresentation {
     }
 
     pub fn new_vulkan(window: &sdl2::video::Window) -> Result<Self, String> {
-        let use_surface = !cfg!(target_os = "android");
-        log!("WGPU Vulkan presentation requested; forcing the Vulkan backend");
-        Self::new_with_backends(window, wgpu::Backends::VULKAN, use_surface)
+        log!("WGPU Vulkan presentation requested; forcing the native Vulkan window-surface path");
+        Self::new_with_backends(window, wgpu::Backends::VULKAN, true)
     }
 
     fn new_with_backends(
@@ -144,7 +143,7 @@ impl WgpuPresentation {
                 }
             }
         } else {
-            log!("WGPU Android path is offscreen to avoid competing with SDL's EGL window surface");
+            log!("WGPU presentation is running without a native surface; the caller will use its SDL fallback when possible");
             None
         };
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {

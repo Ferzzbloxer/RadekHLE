@@ -112,9 +112,9 @@ Device options:
         compatible ARM32 slice. An ARM64-only executable cannot be run as 32-bit.
 
     --metal-translator / --disable-metal-translator
-        Enable the ARM64 GLES translator path explicitly. It is disabled by
-        default; the normal ARM64 path uses direct GLES2 compatibility and does
-        not insert a translator unless this option is selected.
+        Enable the ARM64 GLES translator path. It is enabled by default on
+        ARM64 builds, where it is the compatibility-first rendering path, and
+        can still be disabled to use direct GLES2 compatibility instead.
 
 
 Game controller options:

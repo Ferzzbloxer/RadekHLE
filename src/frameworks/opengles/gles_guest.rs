@@ -71,6 +71,10 @@ fn gl_enum_name(value: GLenum) -> &'static str {
         gles11::INVALID_VALUE => "GL_INVALID_VALUE",
         gles11::INVALID_OPERATION => "GL_INVALID_OPERATION",
         gles11::TEXTURE_2D => "GL_TEXTURE_2D",
+        0x84C0 => "GL_TEXTURE0",
+        0x84C1 => "GL_TEXTURE1",
+        0x84C2 => "GL_TEXTURE2",
+        0x84C3 => "GL_TEXTURE3",
         0x8513 => "GL_TEXTURE_CUBE_MAP",
         gles11::TEXTURE_MIN_FILTER => "GL_TEXTURE_MIN_FILTER",
         gles11::TEXTURE_MAG_FILTER => "GL_TEXTURE_MAG_FILTER",
@@ -2240,6 +2244,77 @@ fn normalise_tex_image_formats(
     (host_internalformat, host_format, host_type)
 }
 
+#[allow(clippy::too_many_arguments)]
+unsafe fn tex_image_2d_checked(
+    gles: &mut dyn GLES,
+    target: GLenum,
+    level: GLint,
+    internalformat: GLint,
+    width: GLsizei,
+    height: GLsizei,
+    border: GLint,
+    format: GLenum,
+    type_: GLenum,
+    pixels: *const GLvoid,
+    fallback_pixels: *const GLvoid,
+) {
+    let previous_error = gles.GetError();
+    if previous_error != gles11::NO_ERROR {
+        log_dbg!(
+            "Cleared stale host GL error before TexImage2D: 0x{:04x} ({})",
+            previous_error,
+            gl_error_name(previous_error)
+        );
+    }
+    gles.TexImage2D(
+        target,
+        level,
+        internalformat,
+        width,
+        height,
+        border,
+        format,
+        type_,
+        pixels,
+    );
+    let error = gles.GetError();
+    if error == gles11::NO_ERROR {
+        return;
+    }
+
+    log!(
+        "Warning: host TexImage2D rejected target=0x{:x} level={} internalformat=0x{:x} size={}x{} format=0x{:x} type=0x{:x}: 0x{:04x} ({}); retrying as RGBA8",
+        target,
+        level,
+        internalformat,
+        width,
+        height,
+        format,
+        type_,
+        error,
+        gl_error_name(error)
+    );
+    gles.TexImage2D(
+        target,
+        level,
+        gles11::RGBA as GLint,
+        width,
+        height,
+        0,
+        gles11::RGBA,
+        gles11::UNSIGNED_BYTE,
+        fallback_pixels,
+    );
+    let fallback_error = gles.GetError();
+    if fallback_error != gles11::NO_ERROR {
+        log!(
+            "Warning: RGBA8 TexImage2D recovery also failed: 0x{:04x} ({})",
+            fallback_error,
+            gl_error_name(fallback_error)
+        );
+    }
+}
+
 fn glTexImage2D(
     env: &mut Environment,
     target: GLenum,
@@ -2313,7 +2388,8 @@ fn glTexImage2D(
                 |(pixels, width, height)| (pixels, width, height),
             );
             gles.PixelStorei(gles11::UNPACK_ALIGNMENT, 1);
-            gles.TexImage2D(
+            tex_image_2d_checked(
+                gles,
                 target,
                 level,
                 gles11::RGBA as GLint,
@@ -2322,6 +2398,7 @@ fn glTexImage2D(
                 border,
                 gles11::RGBA,
                 gles11::UNSIGNED_BYTE,
+                upload_pixels.as_ptr().cast(),
                 upload_pixels.as_ptr().cast(),
             );
             gles.PixelStorei(gles11::UNPACK_ALIGNMENT, alignment);
@@ -2363,7 +2440,8 @@ fn glTexImage2D(
                     format,
                     type_
                 );
-                gles.TexImage2D(
+                tex_image_2d_checked(
+                    gles,
                     target,
                     level,
                     gles11::RGBA as GLint,
@@ -2372,6 +2450,7 @@ fn glTexImage2D(
                     host_border,
                     gles11::RGBA,
                     gles11::UNSIGNED_BYTE,
+                    blank.as_ptr().cast(),
                     blank.as_ptr().cast(),
                 );
             } else {
@@ -2390,7 +2469,8 @@ fn glTexImage2D(
                         host_type
                     );
                 }
-                gles.TexImage2D(
+                tex_image_2d_checked(
+                    gles,
                     target,
                     level,
                     host_internalformat,
@@ -2399,6 +2479,7 @@ fn glTexImage2D(
                     host_border,
                     host_format,
                     host_type,
+                    pixels,
                     pixels,
                 );
             }
