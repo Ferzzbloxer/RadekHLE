@@ -35,8 +35,8 @@ const AL_POSITION: i32 = 0x1004;
 const AL_REFERENCE_DISTANCE: i32 = 0x1020;
 const AL_ROLLOFF_FACTOR: i32 = 0x1021;
 const AL_MAX_DISTANCE: i32 = 0x1023;
-const AUDIO_UNIT_TARGET_UNPROCESSED_BUFFERS: i32 = 32;
-const AUDIO_UNIT_PRIMING_PASSES: usize = 32;
+const AUDIO_UNIT_TARGET_UNPROCESSED_BUFFERS: i32 = 8;
+const AUDIO_UNIT_PRIMING_PASSES: usize = 8;
 
 fn audio_format_is_non_interleaved(format: &AudioStreamBasicDescription) -> bool {
     (format.format_flags & kAudioFormatFlagIsNonInterleaved) != 0

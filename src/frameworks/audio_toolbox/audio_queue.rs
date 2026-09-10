@@ -189,7 +189,7 @@ const kAudioQueueErr_InvalidProperty: OSStatus = -66684;
 /// `kAudioQueueErr_QueueNotStopped` from Apple's `AudioQueue.h`. Returned by
 /// `AudioQueueSetOfflineRenderFormat` when the queue is currently running.
 const kAudioQueueErr_QueueNotStopped: OSStatus = -66677;
-const AUDIO_QUEUE_TARGET_UNPROCESSED_BUFFERS: usize = 12;
+const AUDIO_QUEUE_TARGET_UNPROCESSED_BUFFERS: usize = 4;
 
 fn formats_can_share_output(
     left: &AudioStreamBasicDescription,
@@ -1817,7 +1817,11 @@ fn prime_audio_queue(env: &mut Environment, in_aq: AudioQueueRef) {
         if data.is_empty() {
             record_audio_queue_underrun(host_object, in_aq, std::time::Instant::now());
             let silence_format = fallback_al_format(&host_object.format);
-            let silence_frames = 2048usize;
+            let silence_frames = if host_object.format.format_id == kAudioFormatLinearPCM {
+                256usize
+            } else {
+                512usize
+            };
             al_format = silence_format;
             data = silence_buffer(silence_format, silence_frames);
             log_dbg!(
