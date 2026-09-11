@@ -218,8 +218,8 @@ com.ea.nfsucinc: --force-composition
 # BOF
 com.gameloft.BladesOfFury: --force-composition
 
-# Granny / Unity 2018: keep the safer non-direct memory path and use the GLES2 compatibility presentation path.
-com.dvloper.granny: --disable-direct-memory-access --prefer-gles2-context --force-composition
+# Granny / Unity 2018: keep the safer non-direct memory path and force composition.
+com.dvloper.granny: --disable-direct-memory-access --force-composition
 
 # MCPE LITE
 com.mojang.minecraftpe: --force-composition --trace-gl-errors --fix-texture-min-filter
@@ -250,7 +250,7 @@ com.chillingo.redball3hd: --landscape-left
 # fix) was caused by HyperHLE's internal present path trying to clear a
 # non-zero GL_CURRENT_PROGRAM via glUseProgram(0), which was a no-op
 # stub on GLES1Native. That dance has been removed from the ES 1.1
-# present path, so this app no longer needs --prefer-gles2-context.
+# present path, so this app no longer needs a GLES2 context override.
 # --trace-gl-errors stays so any remaining 0x500 noise is logged with a
 # pointer to the calling host site.
 com.lego.NinjagoSpinjitzuScavengerHunt: --landscape-left --fix-texture-min-filter --trace-gl-errors
@@ -316,24 +316,25 @@ at.source.potato3D: --device-family=iphone --landscape-right --force-composition
 com.tayasui.mrpoofree: --device-family=iphone --landscape-right --fullscreen --force-composition
 # Hack, Slash, Loot (iPad)
 # Landscape iPad title; its first menu is rendered by the fixed-function GLES 1.1 path.
-com.DavidWilliamson.HackSlashLootiPad: --landscape-left --device-family=ipad --gles1=gles1_on_gl2
+com.DavidWilliamson.HackSlashLootiPad: --landscape-left --device-family=ipad
 
 # Super Battle Racers / Battle Racers
-# Unity 4.5 uses the GLES 1.1 compatibility path on this build.
-com.gamehivecorp.superbattleracers: --landscape-right --gles1=gles1_on_gl2
+# Unity 4.5 uses the native GLES 1.1 fixed-function path by default.
+com.gamehivecorp.superbattleracers: --landscape-right
 
 # Animal Farm
 # iPad title; keep the legacy orientation and composition path used by its NIB UI.
 com.blackstoneaudio.enhancedaudioplayer.bsa-Animal-Farm: --device-family=ipad --landscape-right --force-composition
 
 # Minecraft: Story Mode
-com.telltalegames.MC100: --device-family=ipad --landscape-left --prefer-gles2-context
+com.telltalegames.MC100: --device-family=ipad --landscape-left
 
-# Drive Ahead! / Crash On Wheels requests an ES1 EAGL context but uses the Cocos2d GLES2 shader pipeline.
-com.dodreams.crashonwheels: --landscape-left --prefer-gles2-context --force-composition
+# Drive Ahead! / Crash On Wheels requests an ES1 EAGL context; keep the
+# orientation and composition compatibility flags without forcing a translator.
+com.dodreams.crashonwheels: --landscape-left --force-composition
 
 # Green Lantern: native 480x320 landscape OpenGL ES 2 profile.
-com.wb.GreenLantern: --landscape-left --prefer-gles2-context
+com.wb.GreenLantern: --landscape-left
 
 # Where's My Water?: iPhone portrait OpenGL ES 1 profile.
 com.disney.SwampyGame: --device-family=iphone-3gs

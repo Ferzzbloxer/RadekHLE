@@ -101,20 +101,10 @@ pub fn recomposite_if_necessary(env: &mut Environment, force: bool) -> Option<In
 
     let now = Instant::now();
     let display_rate = env.window().display_refresh_rate().max(1.0);
-    let configured_rate = env.options.fps_limit.unwrap_or(display_rate);
-    let capped_rate = if env.options.vsync {
-        configured_rate.min(display_rate)
-    } else {
-        configured_rate
-    };
-    let capped_rate = if env.options.battery_saver {
-        capped_rate.min(24.0)
-    } else {
-        capped_rate
-    };
-    let pacing_enabled = env.options.frame_pacing || env.options.vsync || env.options.battery_saver;
+    let capped_rate = env.options.effective_fps_limit(display_rate);
+    let pacing_enabled = env.options.frame_pacing_enabled();
     let interval = if pacing_enabled {
-        1.0 / capped_rate.max(1.0)
+        1.0 / capped_rate
     } else {
         0.0
     };

@@ -18,9 +18,10 @@ use super::gles_generic::{GLchar, GLES};
 use super::util::{fixed_to_float, float_to_fixed, try_decode_pvrtc};
 use super::GLESContext;
 use crate::window::{GLContext, GLVersion, Window};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, CString};
 use std::marker::PhantomData;
+use std::sync::{Mutex, OnceLock};
 
 const ATTR_POSITION: GLuint = 0;
 const ATTR_COLOR: GLuint = 1;
@@ -304,6 +305,17 @@ fn log_viewport(
         0.0
     };
     let aspect_mismatch = actual_aspect > 0.0 && (requested_aspect - actual_aspect).abs() > 0.01;
+    static LOGGED_VIEWPORTS: OnceLock<Mutex<HashSet<(u32, u32, GLint, GLint, GLsizei, GLsizei)>>> =
+        OnceLock::new();
+    let key = (actual_width, actual_height, x, y, width, height);
+    let should_log = LOGGED_VIEWPORTS
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .map(|mut seen| seen.insert(key))
+        .unwrap_or(true);
+    if !should_log {
+        return;
+    }
     log!(
         "[GLES1→GLES2] glViewport called: x={}, y={}, width={}, height={}, requested_aspect={:.3}, drawable={}x{}, drawable_aspect={:.3}, aspect_mismatch={}",
         x, y, width, height, requested_aspect, actual_width, actual_height, actual_aspect, aspect_mismatch

@@ -342,10 +342,14 @@ fn display_boot_screen(
         }
         Err(error) => {
             log!(
-                "ARM64 boot screen: no usable launch image or icon: {}",
+                "ARM64 boot screen: no usable launch image or icon: {}; using generated blank fallback",
                 error
             );
-            false
+            window.display_compatibility_image(
+                crate::image::Image::from_pixels(1, 1, vec![0, 0, 0, 255]),
+                crate::window::DeviceOrientation::Portrait,
+            );
+            true
         }
     }
 }

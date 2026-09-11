@@ -127,7 +127,7 @@ pub fn main<T: Iterator<Item = String>>(mut args: T) -> Result<(), String> {
     crate::perf::configure_from_environment();
     crate::perf::reset();
     echo!(
-        "RadekHLE 6.0 {}{}{} git_sha={}",
+        "RadekHLE 7.0 {}{}{} git_sha={}",
         branding(),
         if branding().is_empty() { "" } else { " " },
         VERSION,
@@ -266,6 +266,7 @@ pub fn main<T: Iterator<Item = String>>(mut args: T) -> Result<(), String> {
         std::env::remove_var("TOUCHHLE_FORCE_LANDSCAPE_VIEW_BOUNDS");
         std::env::remove_var("TOUCHHLE_TOUCH_LOCATION_PORTRAIT_TO_LANDSCAPE");
         std::env::remove_var("TOUCHHLE_TOUCH_MODE");
+        std::env::remove_var("TOUCHHLE_PRESENT_STRETCH_TO_VIEWPORT");
         if app_id == "com.robtop.geometryjump" {
             std::env::set_var("TOUCHHLE_TOUCH_LOCATION_PORTRAIT_TO_LANDSCAPE", "1");
             std::env::set_var("TOUCHHLE_TOUCH_MODE", "right");
@@ -280,8 +281,24 @@ pub fn main<T: Iterator<Item = String>>(mut args: T) -> Result<(), String> {
         }
 
         std::env::remove_var("TOUCHHLE_TOUCH_LOCATION_Y_OFFSET");
-        std::env::remove_var("TOUCHHLE_PRESENT_STRETCH_TO_VIEWPORT");
         std::env::remove_var("TOUCHHLE_POTATO_ANDROID_THUMB2_COMPAT");
+    }
+
+    if app_id == "com.robtop.geometryjump" && cfg!(target_os = "android") {
+        unsafe {
+            // Same bug as Potato Story/Panic below: on Android the
+            // UIWindow/EAGLView bounds and GL viewport can stay at
+            // Android's 320x480 portrait Cocos shape instead of the real
+            // 480x320 landscape shape, even though touches are already
+            // being remapped above as if it were 480x320. That shape
+            // mismatch means every remapped tap lands on the wrong spot
+            // in the actual view, so menu buttons never register. Force
+            // the real landscape shape to match, same fix as Potato.
+            std::env::set_var("TOUCHHLE_FORCE_LANDSCAPE_VIEWPORT", "1");
+            std::env::set_var("TOUCHHLE_FORCE_LANDSCAPE_RENDERBUFFER", "1");
+            std::env::set_var("TOUCHHLE_FORCE_LANDSCAPE_VIEW_BOUNDS", "1");
+            std::env::set_var("TOUCHHLE_PRESENT_STRETCH_TO_VIEWPORT", "1");
+        }
     }
 
     if matches!(app_id, "at.source.potpan" | "at.source.potato3D") {
@@ -447,6 +464,9 @@ pub fn main<T: Iterator<Item = String>>(mut args: T) -> Result<(), String> {
             );
         }
     }
+    let display_rate = options.fps_limit.unwrap_or(60.0);
+    options.apply_power_profile(display_rate);
+    window::configure_host_performance(options.high_performance, options.force_max_clocks);
     crate::log::set_file_logging(options.log_file);
     if options.core_audio {
         unsafe {

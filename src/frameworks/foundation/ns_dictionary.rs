@@ -292,12 +292,11 @@ pub fn init_with_objects_and_keys(
 ) -> id {
     let first_key: id = va_args.next(env);
     // Spec: `dictionaryWithObjectsAndKeys:` should @throw if the first key is
-    // nil. We log + return an empty dictionary instead of panicking the host.
+    // nil. We return an empty dictionary instead of panicking the host.
     let mut host_object = <DictionaryHostObject as Default>::default();
-    if first_key == nil {
-        log!(
-            "Warning: dictionaryWithObjectsAndKeys:/initWithObjectsAndKeys: first key is nil; \
-             returning empty dictionary."
+    if first_key == nil || first_object == nil {
+        log_once!(
+            "Warning: dictionaryWithObjectsAndKeys:/initWithObjectsAndKeys: first pair is nil; returning empty dictionary."
         );
         *env.objc.borrow_mut(this) = host_object;
         return this;
@@ -519,12 +518,10 @@ pub const CLASSES: ClassExports = objc_classes! {
 }
 
 - (id)init {
-    // NSDictionary is abstract; calling -init on the base class is unusual but
-    // some buggy apps may still do it. Fall back to an empty mutable dict-
-    // backed host object so the receiver remains usable instead of panicking.
-    log!(
-        "Warning: -[NSDictionary init] called on the abstract base class; \
-         returning empty dictionary."
+    // The class-cluster allocator has already returned the internal concrete
+    // dictionary object, so initialise that object in place.
+    log_once!(
+        "NSDictionary class-cluster init: using the internal concrete empty dictionary"
     );
     *env.objc.borrow_mut(this) = <DictionaryHostObject as Default>::default();
     this

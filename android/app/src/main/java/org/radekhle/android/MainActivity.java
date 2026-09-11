@@ -20,7 +20,8 @@ public class MainActivity extends SDLActivity {
     private static final int CUSTOM_DRIVER_REQUEST = 4712;
     private static final int ADD_IPA_REQUEST = 4713;
     private static final int ADD_IPA_MESSAGE = 0x8000;
-    
+    private static final int PERFORMANCE_MODE_MESSAGE = 0x8001;
+
     @Override
     protected String[] getLibraries() {
         return new String[]{
@@ -35,7 +36,24 @@ public class MainActivity extends SDLActivity {
             runOnUiThread(MainActivity::openIpaPicker);
             return true;
         }
+        if (message == PERFORMANCE_MODE_MESSAGE) {
+            int flags = data instanceof Integer ? (Integer) data : 0;
+            runOnUiThread(() -> applyPerformanceMode(flags));
+            return true;
+        }
         return super.onUnhandledMessage(message, data);
+    }
+
+    private void applyPerformanceMode(int flags) {
+        boolean highPerformance = (flags & 1) != 0;
+        boolean maxClocks = (flags & 2) != 0;
+        if (android.os.Build.VERSION.SDK_INT >= 24) {
+            getWindow().setSustainedPerformanceMode(highPerformance || maxClocks);
+        }
+        Log.i(TAG, "Native sustained-performance hint "
+                + ((highPerformance || maxClocks) ? "enabled" : "disabled")
+                + "; max-clocks request=" + maxClocks
+                + " (the device governor remains in control of actual clock rates)");
     }
 
     private static void openIpaPicker() {
@@ -127,10 +145,12 @@ public class MainActivity extends SDLActivity {
                 Log.e(TAG, "Couldn't replace partial imported game file: " + temporary);
                 return false;
             }
-            try (OutputStream output = new FileOutputStream(temporary)) {
+            try (FileOutputStream output = new FileOutputStream(temporary)) {
                 byte[] buffer = new byte[1024 * 1024];
                 int count;
                 while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+                output.flush();
+                output.getFD().sync();
             }
             if (destination.exists() && !destination.delete()) {
                 Log.e(TAG, "Couldn't replace imported game file: " + destination);
@@ -204,10 +224,12 @@ public class MainActivity extends SDLActivity {
         try (InputStream input = getContext().getContentResolver().openInputStream(uri)) {
             if (input == null) return false;
             if (temporary.exists() && !temporary.delete()) return false;
-            try (OutputStream output = new FileOutputStream(temporary)) {
+            try (FileOutputStream output = new FileOutputStream(temporary)) {
                 byte[] buffer = new byte[1024 * 1024];
                 int count;
                 while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+                output.flush();
+                output.getFD().sync();
             }
             if (destination.exists() && !destination.delete()) {
                 temporary.delete();

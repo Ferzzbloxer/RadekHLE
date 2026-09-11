@@ -20,9 +20,9 @@
 //! - CMAcceleration: struct { x: f64, y: f64, z: f64 }
 //! - CMRotationRate: struct { x: f64, y: f64, z: f64 }
 //!
-//! This implementation integrates with the SDL sensor subsystem (via the
-//! window's accelerometer reading) to provide real accelerometer data when
-//! available, and falls back to simulated gravity (0, 0, -1) otherwise.
+//! This implementation integrates with the SDL sensor subsystem to provide
+//! native accelerometer and gyroscope data when the host exposes them, and
+//! falls back to the same stable simulated values used by the desktop build.
 
 use crate::abi::{impl_GuestRet_for_large_struct, GuestArg};
 use crate::dyld::HostDylib;
@@ -176,6 +176,21 @@ fn read_sdl_accelerometer(env: &Environment) -> Option<CMAcceleration> {
     let window = env.window.as_ref()?;
     let (x, y, z) = window.get_acceleration(&env.options);
     Some(CMAcceleration {
+        x: x as f64,
+        y: y as f64,
+        z: z as f64,
+    })
+}
+
+/// Read the host gyroscope through SDL. SDL reports radians per second, which
+/// is also the unit used by Core Motion's `CMRotationRate`.
+fn read_sdl_gyroscope(env: &Environment) -> Option<CMRotationRate> {
+    let window = env.window.as_ref()?;
+    if !window.has_gyroscope() {
+        return None;
+    }
+    let (x, y, z) = window.get_gyroscope();
+    Some(CMRotationRate {
         x: x as f64,
         y: y as f64,
         z: z as f64,
@@ -410,7 +425,8 @@ const CLASSES: ClassExports = objc_classes! {
 // =========================================================================
 // Availability checks
 // Per Apple: These indicate whether the hardware sensor is available.
-// On the emulator: accelerometer can come from SDL; gyro/magnetometer cannot.
+// On the emulator: accelerometer and gyroscope can come from SDL when the
+// host exposes them; magnetometer is intentionally unavailable.
 // =========================================================================
 
 - (bool)isAccelerometerAvailable {
@@ -420,8 +436,9 @@ const CLASSES: ClassExports = objc_classes! {
 }
 
 - (bool)isGyroAvailable {
-    // No gyroscope emulation available on desktop hosts.
-    false
+    env.window
+        .as_ref()
+        .is_some_and(|window| window.has_gyroscope())
 }
 
 - (bool)isDeviceMotionAvailable {
@@ -599,15 +616,18 @@ const CLASSES: ClassExports = objc_classes! {
         return nil;
     }
 
-    // No real gyroscope data available from desktop hosts.
-    // Return zero rotation rate (device is stationary).
+    // SDL exposes the native Android/controller gyroscope as radians per
+    // second. Keep a stationary fallback for desktops and devices without a
+    // gyro so callers still receive a valid CMGyroData object.
+    let rotation_rate = read_sdl_gyroscope(env)
+        .unwrap_or(CMRotationRate { x: 0.0, y: 0.0, z: 0.0 });
     let timestamp = env.objc.borrow::<CMMotionManagerHostObject>(this)
         .start_time.unwrap_or_else(std::time::Instant::now).elapsed().as_secs_f64();
 
     let data: id = msg_class![env; CMGyroData new];
     {
         let data_host = env.objc.borrow_mut::<CMGyroDataHostObject>(data);
-        data_host.rotation_rate = CMRotationRate { x: 0.0, y: 0.0, z: 0.0 };
+        data_host.rotation_rate = rotation_rate;
         data_host.timestamp = timestamp;
     }
     autorelease(env, data)
@@ -619,12 +639,13 @@ const CLASSES: ClassExports = objc_classes! {
         return nil;
     }
 
-    // Without a real gyroscope we cannot do sensor fusion. We approximate:
-    // - gravity = raw accelerometer reading (accurate when device is still)
-    // - userAcceleration = zero (can't separate without gyro)
-    // - rotationRate = zero
+    // Device motion is still a lightweight HLE rather than a full Kalman
+    // filter, but forwarding the native angular velocity makes gyro-driven
+    // games useful while preserving the old gravity-only fallback.
     let accel = read_sdl_accelerometer(env)
         .unwrap_or(CMAcceleration { x: 0.0, y: 0.0, z: -1.0 });
+    let rotation_rate = read_sdl_gyroscope(env)
+        .unwrap_or(CMRotationRate { x: 0.0, y: 0.0, z: 0.0 });
     let timestamp = env.objc.borrow::<CMMotionManagerHostObject>(this)
         .start_time.unwrap_or_else(std::time::Instant::now).elapsed().as_secs_f64();
 
@@ -633,7 +654,7 @@ const CLASSES: ClassExports = objc_classes! {
         let data_host = env.objc.borrow_mut::<CMDeviceMotionHostObject>(data);
         data_host.gravity = accel;
         data_host.user_acceleration = CMAcceleration { x: 0.0, y: 0.0, z: 0.0 };
-        data_host.rotation_rate = CMRotationRate { x: 0.0, y: 0.0, z: 0.0 };
+        data_host.rotation_rate = rotation_rate;
         data_host.timestamp = timestamp;
     }
     autorelease(env, data)

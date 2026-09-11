@@ -56,21 +56,11 @@ impl HostObject for CADisplayLinkHostObject {}
 
 fn display_link_refresh_rate(env: &Environment) -> f64 {
     let display_rate = env.window().display_refresh_rate().max(1.0);
-    let configured_rate = env.options.fps_limit.unwrap_or(display_rate);
-    let capped_rate = if env.options.vsync {
-        configured_rate.min(display_rate)
-    } else {
-        configured_rate
-    };
-    if env.options.battery_saver {
-        capped_rate.min(24.0).max(1.0)
-    } else {
-        capped_rate.max(1.0)
-    }
+    env.options.effective_fps_limit(display_rate)
 }
 
 fn display_link_pacing_enabled(env: &Environment) -> bool {
-    env.options.frame_pacing || env.options.vsync || env.options.battery_saver
+    env.options.frame_pacing_enabled()
 }
 
 pub const CLASSES: ClassExports = objc_classes! {

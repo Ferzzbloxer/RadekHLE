@@ -71,6 +71,10 @@ fn gl_enum_name(value: GLenum) -> &'static str {
         gles11::INVALID_VALUE => "GL_INVALID_VALUE",
         gles11::INVALID_OPERATION => "GL_INVALID_OPERATION",
         gles11::TEXTURE_2D => "GL_TEXTURE_2D",
+        0x84C0 => "GL_TEXTURE0",
+        0x84C1 => "GL_TEXTURE1",
+        0x84C2 => "GL_TEXTURE2",
+        0x84C3 => "GL_TEXTURE3",
         0x8513 => "GL_TEXTURE_CUBE_MAP",
         gles11::TEXTURE_MIN_FILTER => "GL_TEXTURE_MIN_FILTER",
         gles11::TEXTURE_MAG_FILTER => "GL_TEXTURE_MAG_FILTER",
@@ -2204,6 +2208,113 @@ fn image_size_estimate(
         .saturating_mul(height.saturating_sub(1))
         .saturating_add(row_bytes)
 }
+fn normalise_tex_image_formats(
+    internalformat: GLint,
+    format: GLenum,
+    type_: GLenum,
+) -> (GLint, GLenum, GLenum) {
+    let host_format = match format {
+        gles11::ALPHA
+        | gles11::RGB
+        | gles11::RGBA
+        | gles11::LUMINANCE
+        | gles11::LUMINANCE_ALPHA => format,
+        gles11::BGRA_EXT => gles11::RGBA,
+        _ => gles11::RGBA,
+    };
+    let host_type = match type_ {
+        gles11::UNSIGNED_BYTE
+        | gles11::UNSIGNED_SHORT_5_6_5
+        | gles11::UNSIGNED_SHORT_4_4_4_4
+        | gles11::UNSIGNED_SHORT_5_5_5_1
+        | 0x8365
+        | 0x8366
+        | 0x8367 => type_,
+        _ => gles11::UNSIGNED_BYTE,
+    };
+    let valid_internalformat = matches!(
+        internalformat as GLenum,
+        gles11::ALPHA | gles11::RGB | gles11::RGBA | gles11::LUMINANCE | gles11::LUMINANCE_ALPHA
+    );
+    let host_internalformat = if valid_internalformat && internalformat as GLenum == host_format {
+        internalformat
+    } else {
+        host_format as GLint
+    };
+    (host_internalformat, host_format, host_type)
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn tex_image_2d_checked(
+    gles: &mut dyn GLES,
+    target: GLenum,
+    level: GLint,
+    internalformat: GLint,
+    width: GLsizei,
+    height: GLsizei,
+    border: GLint,
+    format: GLenum,
+    type_: GLenum,
+    pixels: *const GLvoid,
+    fallback_pixels: *const GLvoid,
+) {
+    let previous_error = gles.GetError();
+    if previous_error != gles11::NO_ERROR {
+        log_dbg!(
+            "Cleared stale host GL error before TexImage2D: 0x{:04x} ({})",
+            previous_error,
+            gl_error_name(previous_error)
+        );
+    }
+    gles.TexImage2D(
+        target,
+        level,
+        internalformat,
+        width,
+        height,
+        border,
+        format,
+        type_,
+        pixels,
+    );
+    let error = gles.GetError();
+    if error == gles11::NO_ERROR {
+        return;
+    }
+
+    log!(
+        "Warning: host TexImage2D rejected target=0x{:x} level={} internalformat=0x{:x} size={}x{} format=0x{:x} type=0x{:x}: 0x{:04x} ({}); retrying as RGBA8",
+        target,
+        level,
+        internalformat,
+        width,
+        height,
+        format,
+        type_,
+        error,
+        gl_error_name(error)
+    );
+    gles.TexImage2D(
+        target,
+        level,
+        gles11::RGBA as GLint,
+        width,
+        height,
+        0,
+        gles11::RGBA,
+        gles11::UNSIGNED_BYTE,
+        fallback_pixels,
+    );
+    let fallback_error = gles.GetError();
+    if fallback_error != gles11::NO_ERROR {
+        log!(
+            "Warning: RGBA8 TexImage2D recovery also failed: 0x{:04x} ({})",
+            fallback_error,
+            gl_error_name(fallback_error)
+        );
+    }
+}
+
 fn glTexImage2D(
     env: &mut Environment,
     target: GLenum,
@@ -2277,7 +2388,8 @@ fn glTexImage2D(
                 |(pixels, width, height)| (pixels, width, height),
             );
             gles.PixelStorei(gles11::UNPACK_ALIGNMENT, 1);
-            gles.TexImage2D(
+            tex_image_2d_checked(
+                gles,
                 target,
                 level,
                 gles11::RGBA as GLint,
@@ -2287,41 +2399,90 @@ fn glTexImage2D(
                 gles11::RGBA,
                 gles11::UNSIGNED_BYTE,
                 upload_pixels.as_ptr().cast(),
+                upload_pixels.as_ptr().cast(),
             );
             gles.PixelStorei(gles11::UNPACK_ALIGNMENT, alignment);
         } else {
-            let legacy_internalformat = matches!(
-                internalformat as GLenum,
-                gles11::ALPHA | gles11::LUMINANCE | gles11::LUMINANCE_ALPHA | gles11::BGRA_EXT
-            );
-            let legacy_format = matches!(
+            let (host_internalformat, host_format, host_type) =
+                normalise_tex_image_formats(internalformat, format, type_);
+            let supported_source = matches!(
                 format,
-                gles11::ALPHA | gles11::LUMINANCE | gles11::LUMINANCE_ALPHA | gles11::BGRA_EXT
+                gles11::ALPHA
+                    | gles11::RGB
+                    | gles11::RGBA
+                    | gles11::LUMINANCE
+                    | gles11::LUMINANCE_ALPHA
+                    | gles11::BGRA_EXT
+            ) && matches!(
+                type_,
+                gles11::UNSIGNED_BYTE
+                    | gles11::UNSIGNED_SHORT_5_6_5
+                    | gles11::UNSIGNED_SHORT_4_4_4_4
+                    | gles11::UNSIGNED_SHORT_5_5_5_1
+                    | 0x8365
+                    | 0x8366
+                    | 0x8367
             );
-            let host_internalformat = if legacy_internalformat {
-                gles11::RGBA as GLint
+            let host_border = if border == 0 {
+                0
             } else {
-                internalformat
+                log_dbg!("Normalizing non-zero GLES2 texture border {} to 0", border);
+                0
             };
-            let host_format = if legacy_format { gles11::RGBA } else { format };
-            if legacy_internalformat || legacy_format {
-                log_dbg!(
-                    "Normalizing legacy texture allocation formats internal=0x{:x} format=0x{:x} for GLES3-compatible upload",
+            if !pixels.is_null() && !supported_source {
+                let blank_len = (width.max(0) as usize)
+                    .saturating_mul(height.max(0) as usize)
+                    .saturating_mul(4);
+                let blank = vec![0u8; blank_len];
+                log!(
+                    "Warning: unsupported glTexImage2D source format/type internal=0x{:x} format=0x{:x} type=0x{:x}; uploading a safe RGBA fallback",
                     internalformat as u32,
-                    format
+                    format,
+                    type_
+                );
+                tex_image_2d_checked(
+                    gles,
+                    target,
+                    level,
+                    gles11::RGBA as GLint,
+                    width.max(0),
+                    height.max(0),
+                    host_border,
+                    gles11::RGBA,
+                    gles11::UNSIGNED_BYTE,
+                    blank.as_ptr().cast(),
+                    blank.as_ptr().cast(),
+                );
+            } else {
+                if host_internalformat != internalformat
+                    || host_format != format
+                    || host_type != type_
+                    || host_border != border
+                {
+                    log_dbg!(
+                        "Normalizing GLES texture upload internal=0x{:x}/format=0x{:x}/type=0x{:x} to internal=0x{:x}/format=0x{:x}/type=0x{:x}",
+                        internalformat as u32,
+                        format,
+                        type_,
+                        host_internalformat as u32,
+                        host_format,
+                        host_type
+                    );
+                }
+                tex_image_2d_checked(
+                    gles,
+                    target,
+                    level,
+                    host_internalformat,
+                    width,
+                    height,
+                    host_border,
+                    host_format,
+                    host_type,
+                    pixels,
+                    pixels,
                 );
             }
-            gles.TexImage2D(
-                target,
-                level,
-                host_internalformat,
-                width,
-                height,
-                border,
-                host_format,
-                type_,
-                pixels,
-            );
         }
         if fix_filter {
             static SEEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);

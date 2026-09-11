@@ -1641,6 +1641,26 @@ fn inflateReset2(_env: &mut Environment, _strm: MutVoidPtr, _window_bits: i32) -
     0 // Z_OK
 }
 
+/// `int getloadavg(double loadavg[], int nelem)`
+///
+/// Samples the system load averages. There is no real load on an emulated
+/// device, so report a calm fixed load (as an idle device would).
+fn getloadavg(env: &mut Environment, loadavg: MutPtr<f64>, nelem: i32) -> i32 {
+    if nelem < 0 {
+        return -1;
+    }
+    if nelem == 0 {
+        return 0;
+    }
+    let count = nelem.min(3);
+    let samples = [0.5, 0.5, 0.5];
+    for i in 0..count {
+        env.mem
+            .write(loadavg + i as GuestUSize, samples[i as usize]);
+    }
+    count
+}
+
 pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(malloc(_)),
     export_c_func!(malloc_size(_)),
@@ -1654,6 +1674,7 @@ pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(atoi(_)),
     export_c_func!(atol(_)),
     export_c_func!(atof(_)),
+    export_c_func!(getloadavg(_, _)),
     export_c_func!(strtod(_, _)),
     export_c_func!(srand(_)),
     export_c_func!(sranddev()),

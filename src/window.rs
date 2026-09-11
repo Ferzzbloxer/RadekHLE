@@ -1124,6 +1124,57 @@ pub fn host_screen_resolutions() -> Vec<(u32, u32)> {
 
 /// Query the host display refresh rate. SDL receives this from Android's
 /// Display.getRefreshRate(), so high-refresh devices are not forced to 60 Hz.
+pub fn configure_host_performance(high_performance: bool, force_max_clocks: bool) {
+    #[cfg(target_os = "android")]
+    {
+        let flags = i32::from(high_performance) | (i32::from(force_max_clocks) << 1);
+        let result = unsafe { SDL_AndroidSendMessage(PERFORMANCE_MODE_COMMAND, flags) };
+        if result != 0 {
+            log!(
+                "Native Android performance hint could not be delivered: return code {}",
+                result
+            );
+        }
+    }
+
+    if high_performance {
+        sdl2::hint::set("SDL_RENDER_VSYNC", "0");
+        sdl2::hint::set("SDL_ANDROID_BLOCK_ON_PAUSE", "0");
+        unsafe {
+            std::env::set_var("TOUCHHLE_HIGH_PERFORMANCE", "1");
+        }
+        #[cfg(unix)]
+        {
+            let result = unsafe { libc::setpriority(libc::PRIO_PROCESS, 0, -10) };
+            if result == 0 {
+                log!("High performance mode: raised the emulator process priority");
+            } else {
+                log!(
+                    "High performance mode: host denied process-priority adjustment: {}",
+                    std::io::Error::last_os_error()
+                );
+            }
+        }
+        #[cfg(not(unix))]
+        log!("High performance mode: disabled emulator-side pacing");
+    } else {
+        unsafe {
+            std::env::remove_var("TOUCHHLE_HIGH_PERFORMANCE");
+        }
+    }
+
+    if force_max_clocks {
+        unsafe {
+            std::env::set_var("TOUCHHLE_FORCE_MAX_CLOCKS", "1");
+        }
+        log!("Force max clocks requested: using the best-effort host performance hint; clock governors remain controlled by the OS");
+    } else {
+        unsafe {
+            std::env::remove_var("TOUCHHLE_FORCE_MAX_CLOCKS");
+        }
+    }
+}
+
 pub fn host_refresh_rate() -> Option<f64> {
     let sdl_ctx = sdl2::init().ok()?;
     let video_ctx = sdl_ctx.video().ok()?;
@@ -1154,6 +1205,7 @@ pub struct Window {
     /// Copy of `fullscreen` on [Options]. Note that this is meaningless when
     /// [Self::rotatable_fullscreen] returns [true].
     fullscreen: bool,
+    fullscreen_stretched: bool,
     scale_hack: f32,
     host_screen_size: Option<(u32, u32)>,
     software_presentation: bool,
@@ -1176,8 +1228,9 @@ pub struct Window {
     controllers: Vec<sdl2::controller::GameController>,
     dpad_state: DpadState,
     stick_active: bool,
-    _sensor_ctx: sdl2::SensorSubsystem,
+    sensor_ctx: sdl2::SensorSubsystem,
     accelerometer: Option<sdl2::sensor::Sensor>,
+    gyroscope: Option<sdl2::sensor::Sensor>,
     virtual_cursor_last: Option<(f32, f32, bool, bool)>,
     virtual_cursor_last_unsticky: Option<(f32, f32, Instant)>,
     virtual_accelerometer_last: Option<(f32, f32, bool)>,
@@ -1244,9 +1297,14 @@ impl Window {
             crate::gles::configure_custom_driver(options.custom_driver.as_deref());
         crate::gles::configure_angle_driver(options.angle_driver && !custom_driver_active);
         let llvmpipe_active = crate::gles::configure_llvmpipe_fallback(
-            options.llvmpipe_fallback && !custom_driver_active,
+            (options.llvmpipe_fallback || options.software_rendering) && !custom_driver_active,
         );
-        let software_presentation = options.software_rendering || options.software_presentation;
+        let native_cpu_renderer = options.software_rendering && llvmpipe_active;
+        let software_presentation =
+            (options.software_rendering || options.software_presentation) && !native_cpu_renderer;
+        if native_cpu_renderer {
+            log!("Software rendering selected: using the host's native LLVMPipe CPU rasterizer instead of the built-in fallback");
+        }
         let frame_generation = options.frame_generation && !software_presentation;
         let rtcs = options.rtcs;
         if options.frame_generation && software_presentation {
@@ -1270,6 +1328,9 @@ impl Window {
         // (https://github.com/libsdl-org/SDL/issues/7479). Once that's fixed,
         // remove this (https://github.com/touchHLE/touchHLE/issues/85).
         sdl2::hint::set("SDL_JOYSTICK_HIDAPI", "0");
+        if options.high_performance {
+            sdl2::hint::set("SDL_RENDER_VSYNC", "0");
+        }
 
         if env::consts::OS == "android" && !software_presentation {
             // SDL needs the host context profile before creating the window.
@@ -1330,7 +1391,8 @@ impl Window {
         let render_rotation = options.render_rotation;
         let revert_x_axis = options.revert_x_axis;
         let revert_y_axis = options.revert_y_axis;
-        let fullscreen = options.fullscreen;
+        let fullscreen_stretched = options.fullscreen_stretched;
+        let fullscreen = options.fullscreen || fullscreen_stretched;
         let portrait_screen_size =
             host_screen_size.unwrap_or_else(|| device_family.portrait_size());
 
@@ -1381,14 +1443,33 @@ impl Window {
 
         let sensor_ctx = sdl_ctx.sensor().unwrap();
         let mut accelerometer: Option<sdl2::sensor::Sensor> = None;
+        let mut gyroscope: Option<sdl2::sensor::Sensor> = None;
         if let Ok(num_sensors) = sensor_ctx.num_sensors() {
             for sensor_idx in 0..num_sensors {
-                if let Ok(sensor) = sensor_ctx.open(sensor_idx) {
-                    if sensor.sensor_type() == sdl2::sensor::SensorType::Accelerometer {
+                let Ok(sensor) = sensor_ctx.open(sensor_idx) else {
+                    continue;
+                };
+                match sensor.sensor_type() {
+                    sdl2::sensor::SensorType::Accelerometer
+                    | sdl2::sensor::SensorType::LeftAccelerometer
+                    | sdl2::sensor::SensorType::RightAccelerometer
+                        if accelerometer.is_none() =>
+                    {
                         log!("Accelerometer detected: {}.", sensor.name());
                         accelerometer = Some(sensor);
-                        break;
                     }
+                    sdl2::sensor::SensorType::Gyroscope
+                    | sdl2::sensor::SensorType::LeftGyroscope
+                    | sdl2::sensor::SensorType::RightGyroscope
+                        if gyroscope.is_none() =>
+                    {
+                        log!("Gyroscope detected: {}.", sensor.name());
+                        gyroscope = Some(sensor);
+                    }
+                    _ => {}
+                }
+                if accelerometer.is_some() && gyroscope.is_some() {
+                    break;
                 }
             }
         }
@@ -1414,6 +1495,7 @@ impl Window {
             #[cfg(target_os = "macos")]
             viewport_y_offset: 0,
             fullscreen,
+            fullscreen_stretched,
             scale_hack,
             host_screen_size,
             software_presentation,
@@ -1441,8 +1523,9 @@ impl Window {
                 active: false,
             },
             stick_active: false,
-            _sensor_ctx: sensor_ctx,
+            sensor_ctx,
             accelerometer,
+            gyroscope,
             virtual_cursor_last: None,
             virtual_cursor_last_unsticky: None,
             virtual_accelerometer_last: None,
@@ -1476,7 +1559,8 @@ impl Window {
             };
             log!("{} selected as the host presentation backend; guest EAGL remains on the existing GLES2 compatibility path", options.graphics_api.label());
             match presentation {
-                Ok(presentation) => {
+                Ok(mut presentation) => {
+                    presentation.set_stretch_to_fill(fullscreen_stretched);
                     log!(
                         "{} presentation initialized successfully",
                         options.graphics_api.label()
@@ -2185,9 +2269,42 @@ impl Window {
         }
     }
 
+    /// Return whether SDL exposed a native gyroscope for the host device.
+    pub fn has_gyroscope(&self) -> bool {
+        self.gyroscope.is_some()
+    }
+
+    /// Get native gyroscope angular velocity in radians per second using the
+    /// host device's SDL sensor. A missing or temporarily unavailable sensor
+    /// is reported as stationary instead of breaking the guest motion APIs.
+    pub fn get_gyroscope(&self) -> (f32, f32, f32) {
+        self.sensor_ctx.update();
+        let Some(gyroscope) = self.gyroscope.as_ref() else {
+            return (0.0, 0.0, 0.0);
+        };
+        match gyroscope.get_data() {
+            Ok(sdl2::sensor::SensorData::Gyro([x, y, z])) => (x, y, z),
+            Ok(data) => {
+                log_once_fmt!(
+                    "Warning: gyroscope sensor returned non-gyro data ({:?}); reporting zero rotation",
+                    data
+                );
+                (0.0, 0.0, 0.0)
+            }
+            Err(error) => {
+                log_once_fmt!(
+                    "Warning: native gyroscope read failed ({}); reporting zero rotation",
+                    error
+                );
+                (0.0, 0.0, 0.0)
+            }
+        }
+    }
+
     /// Get the real or simulated accelerometer output.
     /// See also [crate::frameworks::uikit::ui_accelerometer].
     pub fn get_acceleration(&self, options: &Options) -> (f32, f32, f32) {
+        self.sensor_ctx.update();
         if self.controllers.is_empty() || !options.analog_stick_tilt_controls {
             if let Some(ref accelerometer) = self.accelerometer {
                 let data = accelerometer.get_data().unwrap();
@@ -2662,45 +2779,54 @@ impl Window {
     ) {
         if self.frame_generation {
             if let Some(mut wgpu) = self.wgpu_presentation.take() {
-                let result = wgpu.present_interpolated(
+                match wgpu.present_interpolated(
                     &pixels,
                     width,
                     height,
                     bottom_up,
                     self.display_refresh_rate,
-                );
-                if let Err(error) = result {
-                    log!("WGPU frame generation failed; presenting the source frame: {error}");
-                    self.frame_generation = false;
-                    self.frame_generation_state.previous = None;
-                    self.frame_generation_state.last_frame_at = None;
-                    if let Err(fallback_error) =
-                        wgpu.present_pixels(&pixels, width, height, bottom_up)
-                    {
-                        log!("WGPU fallback presentation failed: {fallback_error}");
+                ) {
+                    Ok(()) => {
+                        self.wgpu_presentation = Some(wgpu);
+                        return;
+                    }
+                    Err(error) => {
+                        log!("WGPU frame generation failed; presenting the source frame: {error}");
+                        self.frame_generation = false;
+                        self.frame_generation_state.previous = None;
+                        self.frame_generation_state.last_frame_at = None;
+                        match wgpu.present_pixels(&pixels, width, height, bottom_up) {
+                            Ok(()) => {
+                                self.wgpu_presentation = Some(wgpu);
+                                return;
+                            }
+                            Err(fallback_error) => {
+                                log!("WGPU fallback presentation failed; dropping the WGPU path and returning to SDL: {fallback_error}");
+                            }
+                        }
                     }
                 }
-                self.wgpu_presentation = Some(wgpu);
             } else {
                 log_once!("GPU frame generation unavailable; disabling interpolation and presenting source frames only");
                 self.frame_generation = false;
                 self.frame_generation_state.previous = None;
                 self.frame_generation_state.last_frame_at = None;
             }
-            if !self.frame_generation {
-                self.present_native_frame_prepared(pixels, width, height, bottom_up);
-            }
-            return;
         }
         if let Some(mut wgpu) = self.wgpu_presentation.take() {
-            if let Err(error) = wgpu.present_pixels(&pixels, width, height, bottom_up) {
-                log!("WGPU presentation failed: {error}");
+            match wgpu.present_pixels(&pixels, width, height, bottom_up) {
+                Ok(()) => {
+                    self.wgpu_presentation = Some(wgpu);
+                    return;
+                }
+                Err(error) => {
+                    log!("WGPU presentation failed; returning to the SDL swap path: {error}");
+                }
             }
-            self.wgpu_presentation = Some(wgpu);
-            return;
         }
         self.frame_generation_state.previous = None;
         self.frame_generation_state.last_frame_at = None;
+        self.wgpu_presentation = None;
         self.window.gl_swap_window();
     }
 
@@ -2895,9 +3021,9 @@ impl Window {
                 // Also show FPS in the window title so it's visible when the
                 // app is running fullscreen or without console.
                 let base_title = if crate::branding().is_empty() {
-                    format!("RadekHLE 6.0 {}", crate::VERSION)
+                    format!("RadekHLE 7.0 {}", crate::VERSION)
                 } else {
-                    format!("RadekHLE 6.0 {} {}", crate::branding(), crate::VERSION)
+                    format!("RadekHLE 7.0 {} {}", crate::branding(), crate::VERSION)
                 };
                 let title = format!("{} - FPS: {:.1}", base_title, fps);
                 // Ignore any error setting the title.
@@ -3070,6 +3196,10 @@ impl Window {
     /// The aspect ratio of this region always reflects the guest app's view of
     /// the world, but the scale and orientation might not.
     pub fn viewport(&self) -> (u32, u32, u32, u32) {
+        if self.fullscreen_stretched {
+            let (screen_width, screen_height) = self.window.drawable_size();
+            return (0, 0, screen_width, screen_height);
+        }
         let (app_width, app_height) = size_for_orientation_from_size(
             self.screen_size(),
             self.device_orientation,
@@ -3191,6 +3321,8 @@ pub fn open_url(env: &mut Environment, url: &str) -> Result<(), String> {
 
 #[cfg(target_os = "android")]
 const ADD_IPA_COMMAND: u32 = 0x8000;
+#[cfg(target_os = "android")]
+const PERFORMANCE_MODE_COMMAND: u32 = 0x8001;
 
 #[cfg(target_os = "android")]
 unsafe extern "C" {
@@ -3242,7 +3374,7 @@ pub fn show_error_messagebox(window: Option<&Window>, error_message: &str) {
         messagebox::MessageBoxFlag::ERROR,
         &mbox,
         "touchHLE crashed!",
-        &format!("RadekHLE 6.0 crashed with the following error: {error_message}"),
+        &format!("RadekHLE 7.0 crashed with the following error: {error_message}"),
         window.map(|win| &win.window),
         None,
     ) else {

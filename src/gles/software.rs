@@ -18,19 +18,55 @@ pub fn available() -> bool {
     Path::new(&egl).is_file() && Path::new(&gles).is_file()
 }
 
+fn native_library_path(name: &str) -> Option<std::path::PathBuf> {
+    let candidates = if cfg!(target_arch = "x86_64") {
+        vec![
+            format!("/usr/lib/x86_64-linux-gnu/{name}"),
+            format!("/usr/lib/{name}"),
+        ]
+    } else if cfg!(target_arch = "aarch64") {
+        vec![
+            format!("/usr/lib/aarch64-linux-gnu/{name}"),
+            format!("/usr/lib/{name}"),
+        ]
+    } else {
+        vec![format!("/usr/lib/{name}")]
+    };
+    candidates
+        .into_iter()
+        .map(std::path::PathBuf::from)
+        .find(|path| path.is_file())
+}
+
 pub fn configure(enabled: bool) -> bool {
     if !enabled {
         return false;
     }
-    let Some(egl) = std::env::var_os("TOUCHHLE_LLVMPIPE_EGL") else {
-        log_once!("LLVMPipe fallback enabled but TOUCHHLE_LLVMPIPE_EGL is not configured");
+    let egl = std::env::var_os("TOUCHHLE_LLVMPIPE_EGL")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            if cfg!(target_os = "android") {
+                None
+            } else {
+                native_library_path("libEGL_mesa.so.0")
+                    .or_else(|| native_library_path("libEGL.so.1"))
+            }
+        });
+    let gles = std::env::var_os("TOUCHHLE_LLVMPIPE_GLES")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            if cfg!(target_os = "android") {
+                None
+            } else {
+                native_library_path("libGLESv2_mesa.so.2")
+                    .or_else(|| native_library_path("libGLESv2.so.2"))
+            }
+        });
+    let (Some(egl), Some(gles)) = (egl, gles) else {
+        log_once!("LLVMPipe fallback enabled but no native Mesa EGL/GLES libraries were found; set TOUCHHLE_LLVMPIPE_EGL and TOUCHHLE_LLVMPIPE_GLES to provide them");
         return false;
     };
-    let Some(gles) = std::env::var_os("TOUCHHLE_LLVMPIPE_GLES") else {
-        log_once!("LLVMPipe fallback enabled but TOUCHHLE_LLVMPIPE_GLES is not configured");
-        return false;
-    };
-    if !Path::new(&egl).is_file() || !Path::new(&gles).is_file() {
+    if !egl.is_file() || !gles.is_file() {
         log_once!("LLVMPipe fallback enabled but configured Mesa libraries were not found");
         return false;
     }

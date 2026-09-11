@@ -117,8 +117,12 @@ impl BundleData {
     pub fn open_ipa(path: &Path) -> Result<BundleData, String> {
         let file =
             std::fs::File::open(path).map_err(|e| format!("Could not open IPA file: {e}"))?;
-        let mut zip =
-            ZipArchive::new(file).map_err(|e| format!("Could not open IPA archive: {e}"))?;
+        let mut zip = ZipArchive::new(file).map_err(|e| {
+            format!(
+                "Could not open IPA archive {}: {e}; the file is incomplete or corrupted, so obtain a clean copy",
+                path.display()
+            )
+        })?;
         let bundle_path = Self::find_bundle_path_in_archive(&mut zip)?;
         Ok(BundleData::Zip { zip, bundle_path })
     }

@@ -447,11 +447,15 @@ impl Environment {
                 };
                 res.ok()
             } else {
-                None
+                log!(
+                    "Warning: No launch image found for {}; using generated blank fallback",
+                    bundle.bundle_identifier()
+                );
+                Some(image::Image::from_pixels(1, 1, vec![0, 0, 0, 255]))
             };
             Some(Box::new(window::Window::new(
                 &format!(
-                    "{} (RadekHLE 6.0 {}{}{})",
+                    "{} (RadekHLE 7.0 {}{}{})",
                     bundle.display_name(),
                     super::branding(),
                     if super::branding().is_empty() {
@@ -854,7 +858,7 @@ impl Environment {
         assert!(!options.headless);
         let window = Some(Box::new(window::Window::new(
             &format!(
-                "RadekHLE 6.0 {}{}{}",
+                "RadekHLE 7.0 {}{}{}",
                 super::branding(),
                 if super::branding().is_empty() {
                     ""

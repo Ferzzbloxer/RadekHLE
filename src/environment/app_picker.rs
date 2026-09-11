@@ -142,22 +142,36 @@ fn enumerate_apps(apps_dir: &Path) -> Result<Vec<AppInfo>, std::io::Error> {
     Ok(apps)
 }
 
-fn list_top_level_ipa_files(apps_dir: &Path) -> Vec<(String, u64)> {
+fn list_top_level_ipa_files(apps_dir: &Path) -> Vec<(String, u64, u128)> {
     let mut files = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(apps_dir) {
+    let mut directories = vec![apps_dir.to_path_buf()];
+    while let Some(directory) = directories.pop() {
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("ipa"))
-            {
+            let is_directory = entry.file_type().is_ok_and(|file_type| file_type.is_dir());
+            let is_game_entry = path.extension().is_some_and(|ext| {
+                ext.eq_ignore_ascii_case("ipa") || ext.eq_ignore_ascii_case("app")
+            });
+            if is_game_entry {
+                let Ok(metadata) = entry.metadata() else {
+                    continue;
+                };
+                let modified = metadata
+                    .modified()
+                    .ok()
+                    .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map_or(0, |duration| duration.as_nanos());
                 let name = path
-                    .file_name()
-                    .unwrap_or_default()
+                    .strip_prefix(apps_dir)
+                    .unwrap_or(&path)
                     .to_string_lossy()
                     .into_owned();
-                let size = entry.metadata().map(|metadata| metadata.len()).unwrap_or(0);
-                files.push((name, size));
+                files.push((name, metadata.len(), modified));
+            } else if is_directory {
+                directories.push(path);
             }
         }
     }
@@ -166,7 +180,7 @@ fn list_top_level_ipa_files(apps_dir: &Path) -> Vec<(String, u64)> {
 }
 
 struct IpaWatch {
-    last_seen: Vec<(String, u64)>,
+    last_seen: Vec<(String, u64, u128)>,
     dirty: bool,
     last_change: Option<Instant>,
 }
@@ -322,8 +336,12 @@ struct AppPickerDelegateHostObject {
     fps_limit: Option<Option<f64>>,
     vsync: Option<bool>,
     battery_saver: Option<bool>,
+    ultra_battery_saver: Option<bool>,
     frame_generation: Option<bool>,
+    high_performance: Option<bool>,
+    force_max_clocks: Option<bool>,
     fullscreen: Option<bool>,
+    fullscreen_stretched: Option<bool>,
     angle_driver: Option<bool>,
     log_file: Option<bool>,
     trace_gl_errors: Option<bool>,
@@ -537,6 +555,10 @@ const CLASSES: ClassExports = objc_classes! {
     let switch_state: bool = msg![env; switch isOn];
     env.objc.borrow_mut::<AppPickerDelegateHostObject>(this).battery_saver = Some(switch_state);
 }
+- (())ultraBatterySaver:(id)switch {
+    let switch_state: bool = msg![env; switch isOn];
+    env.objc.borrow_mut::<AppPickerDelegateHostObject>(this).ultra_battery_saver = Some(switch_state);
+}
 - (())frameGeneration:(id)switch {
     let switch_state: bool = msg![env; switch isOn];
     env.objc.borrow_mut::<AppPickerDelegateHostObject>(this).frame_generation = Some(switch_state);
@@ -544,6 +566,10 @@ const CLASSES: ClassExports = objc_classes! {
 - (())fullscreen:(id)switch { // UISwitch*
     let switch_state: bool = msg![env; switch isOn];
     env.objc.borrow_mut::<AppPickerDelegateHostObject>(this).fullscreen = Some(switch_state);
+}
+- (())fullscreenStretched:(id)switch { // UISwitch*
+    let switch_state: bool = msg![env; switch isOn];
+    env.objc.borrow_mut::<AppPickerDelegateHostObject>(this).fullscreen_stretched = Some(switch_state);
 }
 - (())angleDriver:(id)switch { // UISwitch*
     let switch_state: bool = msg![env; switch isOn];
@@ -615,6 +641,14 @@ const CLASSES: ClassExports = objc_classes! {
 - (())lowAudioQuality:(id)switch {
     let switch_state: bool = msg![env; switch isOn];
     env.objc.borrow_mut::<AppPickerDelegateHostObject>(this).low_audio_quality = Some(switch_state);
+}
+- (())highPerformance:(id)switch {
+    let switch_state: bool = msg![env; switch isOn];
+    env.objc.borrow_mut::<AppPickerDelegateHostObject>(this).high_performance = Some(switch_state);
+}
+- (())forceMaxClocks:(id)switch {
+    let switch_state: bool = msg![env; switch isOn];
+    env.objc.borrow_mut::<AppPickerDelegateHostObject>(this).force_max_clocks = Some(switch_state);
 }
 
 - (())arm64Backend:(id)switch {
@@ -909,7 +943,7 @@ fn app_picker_inner(
         break;
     }
     if !found_wallpaper {
-        if let Ok(mut resource) = paths::ResourceFile::open("RadekHLE_ios26_wallpaper.png") {
+        if let Ok(mut resource) = paths::ResourceFile::open("RadekHLE_v7_wallpaper.png") {
             let mut bytes = Vec::new();
             if resource.get().read_to_end(&mut bytes).is_ok() {
                 if let Ok(image) = Image::from_bytes(&bytes) {
@@ -956,7 +990,7 @@ fn app_picker_inner(
         let text = ns_string::from_rust_string(
             env,
             format!(
-                "RadekHLE 6.0 {}{}{}",
+                "RadekHLE 7.0 {}{}{}",
                 crate::branding(),
                 if crate::branding().is_empty() {
                     ""
@@ -1043,6 +1077,7 @@ fn app_picker_inner(
     let mut quick_options_scale_hack: Option<f32> = None;
     let mut quick_options_custom_resolution: Option<(u32, u32)> = None;
     let mut quick_options_fullscreen: Option<()> = None;
+    let mut quick_options_fullscreen_stretched = false;
     let mut quick_options_orientation: Option<DeviceOrientation> = None;
     let mut quick_options_render_rotation: Option<RenderRotation> = None;
     let mut quick_options_revert_x_axis = false;
@@ -1054,8 +1089,11 @@ fn app_picker_inner(
     let mut quick_options_frame_pacing = true;
     let mut quick_options_fps_limit: Option<f64> = None;
     let mut quick_options_frame_generation = false;
+    let mut quick_options_high_performance = false;
+    let mut quick_options_force_max_clocks = false;
     let mut quick_options_vsync = false;
     let mut quick_options_battery_saver = false;
+    let mut quick_options_ultra_battery_saver = false;
     let mut quick_options_verbose_logging = false;
     let mut quick_options_shader_compatibility_fixes = true;
     let mut quick_options_fix_texture_min_filter = cfg!(target_os = "android");
@@ -1080,7 +1118,7 @@ fn app_picker_inner(
     let mut quick_options_arm64_backend = crate::options::Arm64Backend::Interpreter;
     let mut quick_options_arm64_fallback = crate::options::Arm64Fallback::Interpreter;
     let mut quick_options_llvmpipe_fallback = false;
-    let mut quick_options_metal_translator = false;
+    let mut quick_options_metal_translator = cfg!(target_arch = "aarch64");
     let mut quick_options_software_rendering = false;
     let mut quick_options_custom_driver = false;
     let mut quick_options_anisotropic_filtering = 1u8;
@@ -1275,6 +1313,7 @@ fn app_picker_inner(
         setOn:quick_options_frame_generation];
     () = msg![env; (quick_options_stuff.vsync_switch) setOn:quick_options_vsync];
     () = msg![env; (quick_options_stuff.battery_saver_switch) setOn:quick_options_battery_saver];
+    () = msg![env; (quick_options_stuff.ultra_battery_saver_switch) setOn:quick_options_ultra_battery_saver];
     () =
         msg![env; (quick_options_stuff.verbose_logging_switch) setOn:quick_options_verbose_logging];
     () = msg![env; (quick_options_stuff.fix_texture_min_filter_switch)
@@ -1372,9 +1411,9 @@ fn app_picker_inner(
                 &copyright_info_text,
                 copyright_info_page_idx,
             );
-            () = msg![env; (copyright_info_stuff.main_view) setHidden:false];
+            animate_picker_panel(env, copyright_info_stuff.main_view, true);
         } else if std::mem::take(&mut host_obj.copyright_hide) {
-            () = msg![env; (copyright_info_stuff.main_view) setHidden:true];
+            animate_picker_panel(env, copyright_info_stuff.main_view, false);
         } else if std::mem::take(&mut host_obj.copyright_prev) && copyright_info_page_idx != 0 {
             copyright_info_page_idx -= 1;
             change_copyright_page(
@@ -1394,11 +1433,11 @@ fn app_picker_inner(
                 copyright_info_page_idx,
             );
         } else if std::mem::take(&mut host_obj.quick_options_show) {
-            () = msg![env; (quick_options_stuff.settings_backdrop) setHidden:false];
-            () = msg![env; (quick_options_stuff.main_view) setHidden:false];
+            animate_picker_panel(env, quick_options_stuff.settings_backdrop, true);
+            animate_picker_panel(env, quick_options_stuff.main_view, true);
         } else if std::mem::take(&mut host_obj.quick_options_hide) {
-            () = msg![env; (quick_options_stuff.main_view) setHidden:true];
-            () = msg![env; (quick_options_stuff.settings_backdrop) setHidden:true];
+            animate_picker_panel(env, quick_options_stuff.main_view, false);
+            animate_picker_panel(env, quick_options_stuff.settings_backdrop, false);
         } else if std::mem::take(&mut host_obj.apps_refresh_requested) {
             let apps_dir = paths::user_data_base_path().join(paths::APPS_DIR);
             match enumerate_apps(&apps_dir) {
@@ -1798,6 +1837,13 @@ fn app_picker_inner(
             quick_options_vsync = enabled;
         } else if let Some(enabled) = std::mem::take(&mut host_obj.battery_saver) {
             quick_options_battery_saver = enabled;
+        } else if let Some(enabled) = std::mem::take(&mut host_obj.ultra_battery_saver) {
+            quick_options_ultra_battery_saver = enabled;
+            if enabled {
+                quick_options_battery_saver = true;
+                () = msg![env; (quick_options_stuff.battery_saver_switch) setOn:true];
+            }
+            () = msg![env; (quick_options_stuff.ultra_battery_saver_switch) setOn:enabled];
         } else if let Some(enabled) = std::mem::take(&mut host_obj.verbose_logging) {
             quick_options_verbose_logging = enabled;
         } else if let Some(enabled) = std::mem::take(&mut host_obj.shader_compatibility_fixes) {
@@ -1809,11 +1855,23 @@ fn app_picker_inner(
         } else if let Some(enabled) = std::mem::take(&mut host_obj.frame_generation) {
             quick_options_frame_generation = enabled;
             () = msg![env; (quick_options_stuff.frame_generation_switch) setOn:enabled];
+        } else if let Some(enabled) = std::mem::take(&mut host_obj.high_performance) {
+            quick_options_high_performance = enabled;
+            if !enabled {
+                quick_options_force_max_clocks = false;
+            }
+        } else if let Some(enabled) = std::mem::take(&mut host_obj.force_max_clocks) {
+            quick_options_force_max_clocks = enabled;
+            if enabled {
+                quick_options_high_performance = true;
+            }
         } else if let Some(fullscreen) = std::mem::take(&mut host_obj.fullscreen) {
             quick_options_fullscreen = match fullscreen {
                 false => None,
                 true => Some(()),
             };
+        } else if let Some(enabled) = std::mem::take(&mut host_obj.fullscreen_stretched) {
+            quick_options_fullscreen_stretched = enabled;
         } else if let Some(enabled) = std::mem::take(&mut host_obj.llvmpipe_fallback) {
             quick_options_llvmpipe_fallback = enabled;
         } else if let Some(enabled) = std::mem::take(&mut host_obj.metal_translator) {
@@ -1941,6 +1999,14 @@ fn app_picker_inner(
     if let Some(()) = quick_options_fullscreen {
         option_args.push("--fullscreen".to_string());
     }
+    option_args.push(
+        if quick_options_fullscreen_stretched {
+            "--fullscreen-stretched"
+        } else {
+            "--disable-fullscreen-stretched"
+        }
+        .to_string(),
+    );
     if !quick_options_analog_stick_tilt_controls {
         option_args.push("--disable-analog-stick-tilt-controls".to_string());
     }
@@ -1992,10 +2058,34 @@ fn app_picker_inner(
         .to_string(),
     );
     option_args.push(
+        if quick_options_ultra_battery_saver {
+            "--ultra-battery-saver"
+        } else {
+            "--disable-ultra-battery-saver"
+        }
+        .to_string(),
+    );
+    option_args.push(
         if quick_options_frame_generation {
             "--frame-generation"
         } else {
             "--disable-frame-generation"
+        }
+        .to_string(),
+    );
+    option_args.push(
+        if quick_options_high_performance {
+            "--high-performance"
+        } else {
+            "--disable-high-performance"
+        }
+        .to_string(),
+    );
+    option_args.push(
+        if quick_options_force_max_clocks {
+            "--force-max-clocks"
+        } else {
+            "--disable-force-max-clocks"
         }
         .to_string(),
     );
@@ -2906,6 +2996,7 @@ struct QuickOptionsStuff {
     no_texture_compression_switch: id,
     vsync_switch: id,
     battery_saver_switch: id,
+    ultra_battery_saver_switch: id,
     verbose_logging_switch: id,
     fix_texture_min_filter_switch: id,
     force_composition_switch: id,
@@ -3135,6 +3226,10 @@ fn setup_quick_options(
         RowKind::Switch("lowAudioQuality:", false),
         RowKind::Label("Graphics API"),
         RowKind::GraphicsApiDropdown,
+        RowKind::Label("High performance mode"),
+        RowKind::Switch("highPerformance:", false),
+        RowKind::Label("Force max clocks (Adreno)"),
+        RowKind::Switch("forceMaxClocks:", false),
         RowKind::Label("Shader compatibility fixes"),
         RowKind::Switch("shaderCompatibilityFixes:", true),
         RowKind::Label("Fix incomplete textures"),
@@ -3181,9 +3276,11 @@ fn setup_quick_options(
         RowKind::Switch("noTextureCompression:", false),
         RowKind::Label("Battery saver"),
         RowKind::Switch("batterySaver:", false),
+        RowKind::Label("Ultra battery saver"),
+        RowKind::Switch("ultraBatterySaver:", false),
         RowKind::Label("Memory management"),
         RowKind::MemoryManagementDropdown,
-        RowKind::Label("Dynarmic JIT"),
+        RowKind::Label("ARM64 JIT (off = interpreter)"),
         RowKind::Switch("arm64Backend:", false),
         RowKind::Label("Interpreter fallback"),
         RowKind::Switch("arm64Fallback:", false),
@@ -3227,6 +3324,8 @@ fn setup_quick_options(
         RowKind::Switch("revertXAxis:", false),
         RowKind::Label("Revert Y axis"),
         RowKind::Switch("revertYAxis:", false),
+        RowKind::Label("Fullscreen (stretched)"),
+        RowKind::Switch("fullscreenStretched:", false),
         RowKind::Label("Device model"),
         RowKind::DeviceDropdown,
         RowKind::Label("Network access"),
@@ -3287,6 +3386,7 @@ fn setup_quick_options(
     let mut no_texture_compression_switch: id = nil;
     let mut vsync_switch: id = nil;
     let mut battery_saver_switch: id = nil;
+    let mut ultra_battery_saver_switch: id = nil;
     let mut verbose_logging_switch: id = nil;
     let mut fix_texture_min_filter_switch: id = nil;
     let mut force_composition_switch: id = nil;
@@ -3533,6 +3633,9 @@ fn setup_quick_options(
                 }
                 if selector_name == "batterySaver:" {
                     battery_saver_switch = switch;
+                }
+                if selector_name == "ultraBatterySaver:" {
+                    ultra_battery_saver_switch = switch;
                 }
                 if selector_name == "verboseLogging:" {
                     verbose_logging_switch = switch;
@@ -3796,6 +3899,7 @@ fn setup_quick_options(
         no_texture_compression_switch,
         vsync_switch,
         battery_saver_switch,
+        ultra_battery_saver_switch,
         verbose_logging_switch,
         fix_texture_min_filter_switch,
         force_composition_switch,
@@ -3806,6 +3910,48 @@ fn setup_quick_options(
         device_model_items,
         device_model_thumb,
     }
+}
+
+fn animate_picker_panel(env: &mut Environment, panel: id, visible: bool) {
+    if panel == nil {
+        return;
+    }
+
+    let layer: id = msg![env; panel layer];
+    let key_path = ns_string::get_static_str(env, "opacity");
+    let animation: id = msg_class![env; CABasicAnimation animationWithKeyPath:key_path];
+    let from_alpha: f32 = if visible { 0.0 } else { 1.0 };
+    let to_alpha: f32 = if visible { 1.0 } else { 0.0 };
+    let from_value: id = msg_class![env; NSNumber numberWithFloat:from_alpha];
+    let to_value: id = msg_class![env; NSNumber numberWithFloat:to_alpha];
+    () = msg![env; animation setFromValue:from_value];
+    () = msg![env; animation setToValue:to_value];
+    () = msg![env; animation setDuration:(0.18_f64)];
+    () = msg![env; animation setRemovedOnCompletion:true];
+
+    // Keep the model layer at the animation's start value until the explicit
+    // animation is installed. The old order set alpha to zero before adding
+    // the hide animation, which exposed the coloured picker backing view for
+    // one compositor pass and produced the pink flash on close.
+    () = msg![env; panel setHidden:false];
+    () = msg![env; panel setUserInteractionEnabled:visible];
+    () = msg![env; panel setAlpha:(from_alpha as CGFloat)];
+    () = msg![env; layer addAnimation:animation forKey:key_path];
+    () = msg![env; panel setAlpha:(to_alpha as CGFloat)];
+
+    let transform_key = ns_string::get_static_str(env, "transform.scale");
+    let transform: id = msg_class![env; CABasicAnimation animationWithKeyPath:transform_key];
+    let from_scale = if visible { 0.94_f32 } else { 1.0_f32 };
+    let to_scale = if visible { 1.0_f32 } else { 0.94_f32 };
+    let from_scale_value: id = msg_class![env; NSNumber numberWithFloat:from_scale];
+    let to_scale_value: id = msg_class![env; NSNumber numberWithFloat:to_scale];
+    () = msg![env; transform setFromValue:from_scale_value];
+    () = msg![env; transform setToValue:to_scale_value];
+    () = msg![env; transform setDuration:(0.2_f64)];
+    () = msg![env; transform setRemovedOnCompletion:true];
+    () = msg![env; layer addAnimation:transform forKey:transform_key];
+    release(env, transform_key);
+    release(env, key_path);
 }
 
 /// Re-lay-out and re-style the device-model dropdown list for the given scroll

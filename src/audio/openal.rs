@@ -71,6 +71,24 @@ impl OpenALManager {
 }
 
 fn ensure_openal_backend_available() {
+    // Keep the Android mixer on its own host thread, but use a short mixer
+    // block. The old 2048-sample default compounded with the guest queue lead
+    // and made music start noticeably late. Explicit ALSOFT_* settings still
+    // win, so advanced users can raise the block size for a problematic device.
+    if cfg!(target_os = "android") {
+        unsafe {
+            if std::env::var_os("ALSOFT_MIXER_THREADS").is_none() {
+                std::env::set_var("ALSOFT_MIXER_THREADS", "1");
+            }
+            if std::env::var_os("ALSOFT_UPDATE_SIZE").is_none() {
+                std::env::set_var("ALSOFT_UPDATE_SIZE", "256");
+            }
+            if std::env::var_os("ALSOFT_BUFFER_SIZE").is_none() {
+                std::env::set_var("ALSOFT_BUFFER_SIZE", "1024");
+            }
+        }
+    }
+
     // Respect any user-provided override.
     if std::env::var_os("ALSOFT_DRIVERS").is_some() {
         return;
@@ -124,6 +142,9 @@ fn ensure_openal_backend_available() {
     // made. No other thread can be reading the environment concurrently.
     unsafe {
         std::env::set_var("ALSOFT_DRIVERS", "null");
+        if std::env::var_os("ALSOFT_UPDATE_SIZE").is_none() {
+            std::env::set_var("ALSOFT_UPDATE_SIZE", "256");
+        }
         if std::env::var_os("ALSOFT_BUFFER_SIZE").is_none() {
             std::env::set_var("ALSOFT_BUFFER_SIZE", "1024");
         }
@@ -263,11 +284,12 @@ impl OpenALContext {
             return Err("Could not open OpenAL context".to_string());
         }
         log!(
-            "OpenAL context created: device={:?}, context={:?}, core_audio_mode={}, mixer_threads={:?}, buffer_size={:?}",
+            "OpenAL context created: device={:?}, context={:?}, core_audio_mode={}, mixer_threads={:?}, update_size={:?}, buffer_size={:?}",
             device,
             context,
             std::env::var_os("TOUCHHLE_CORE_AUDIO").is_some(),
             std::env::var("ALSOFT_MIXER_THREADS").ok(),
+            std::env::var("ALSOFT_UPDATE_SIZE").ok(),
             std::env::var("ALSOFT_BUFFER_SIZE").ok(),
         );
         Ok(Self { context, device })

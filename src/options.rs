@@ -86,7 +86,7 @@ impl Arm64Backend {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum GraphicsApi {
     Default,
     Translator,
@@ -345,6 +345,9 @@ impl RenderRotation {
 #[derive(Clone)]
 pub struct Options {
     pub fullscreen: bool,
+    /// Fill the host display without preserving the emulated device aspect ratio.
+    /// This is a presentation-only option; guest orientation and input geometry stay unchanged.
+    pub fullscreen_stretched: bool,
     pub device_family: Option<DeviceFamily>,
     pub auto_device_family: bool,
     /// When set, the guest sees a screen of exactly this size (in points) and
@@ -400,8 +403,13 @@ pub struct Options {
     pub frame_pacing: bool,
     pub vsync: bool,
     pub battery_saver: bool,
+    pub ultra_battery_saver: bool,
     /// Generate presentation frames up to the host display refresh rate. Disabled by default.
     pub frame_generation: bool,
+    /// Disable emulation throttles and request the highest practical host scheduling priority.
+    pub high_performance: bool,
+    /// Ask the host platform for a best-effort maximum-performance GPU/CPU hint.
+    pub force_max_clocks: bool,
     /// Apply a safe, visual-only accelerating corruption effect to presented frames.
     pub rtcs: bool,
     pub force_composition: bool,
@@ -468,6 +476,7 @@ impl Default for Options {
     fn default() -> Self {
         Options {
             fullscreen: false,
+            fullscreen_stretched: false,
             device_family: None,
             auto_device_family: false,
             host_screen_size: None,
@@ -504,7 +513,7 @@ impl Default for Options {
             arm64_backend: Arm64Backend::Interpreter,
             arm64_fallback: Arm64Fallback::Interpreter,
             llvmpipe_fallback: false,
-            metal_translator: false,
+            metal_translator: cfg!(target_arch = "aarch64"),
             gdb_listen_addrs: None,
             preferred_languages: None,
             headless: false,
@@ -513,7 +522,10 @@ impl Default for Options {
             frame_pacing: true,
             vsync: false,
             battery_saver: false,
+            ultra_battery_saver: false,
             frame_generation: false,
+            high_performance: false,
+            force_max_clocks: false,
             rtcs: false,
             force_composition: false,
             prefer_gles2_context: false,
@@ -565,6 +577,11 @@ impl Options {
 
         if arg == "--fullscreen" {
             self.fullscreen = true;
+        } else if arg == "--fullscreen-stretched" {
+            self.fullscreen = true;
+            self.fullscreen_stretched = true;
+        } else if arg == "--disable-fullscreen-stretched" {
+            self.fullscreen_stretched = false;
         } else if arg == "--landscape-left" {
             self.initial_orientation = DeviceOrientation::LandscapeLeft;
         } else if arg == "--landscape-right" {
@@ -833,10 +850,26 @@ impl Options {
             self.battery_saver = true;
         } else if arg == "--disable-battery-saver" || arg == "--battery-saver=off" {
             self.battery_saver = false;
+            self.ultra_battery_saver = false;
+        } else if arg == "--ultra-battery-saver" || arg == "--ultra-battery-saver=on" {
+            self.ultra_battery_saver = true;
+            self.battery_saver = true;
+        } else if arg == "--disable-ultra-battery-saver" || arg == "--ultra-battery-saver=off" {
+            self.ultra_battery_saver = false;
         } else if arg == "--frame-generation" || arg == "--frame-generation=on" {
             self.frame_generation = true;
         } else if arg == "--disable-frame-generation" || arg == "--frame-generation=off" {
             self.frame_generation = false;
+        } else if arg == "--high-performance" || arg == "--high-performance=on" {
+            self.high_performance = true;
+        } else if arg == "--disable-high-performance" || arg == "--high-performance=off" {
+            self.high_performance = false;
+            self.force_max_clocks = false;
+        } else if arg == "--force-max-clocks" || arg == "--force-max-clocks=on" {
+            self.high_performance = true;
+            self.force_max_clocks = true;
+        } else if arg == "--disable-force-max-clocks" || arg == "--force-max-clocks=off" {
+            self.force_max_clocks = false;
         } else if arg == "--rtcs" || arg == "--rtcs=on" {
             self.rtcs = true;
         } else if arg == "--disable-rtcs" || arg == "--rtcs=off" {
@@ -923,6 +956,49 @@ impl Options {
         };
         Ok(true)
     }
+
+    pub fn effective_fps_limit(&self, display_rate: f64) -> f64 {
+        let configured = self.fps_limit.unwrap_or(display_rate).max(1.0);
+        let configured = if self.vsync {
+            configured.min(display_rate.max(1.0))
+        } else {
+            configured
+        };
+        if self.ultra_battery_saver {
+            configured.min(10.0)
+        } else if self.battery_saver {
+            configured.min(24.0)
+        } else {
+            configured
+        }
+    }
+
+    pub fn frame_pacing_enabled(&self) -> bool {
+        !self.high_performance
+            && (self.frame_pacing || self.vsync || self.battery_saver || self.ultra_battery_saver)
+    }
+
+    pub fn apply_power_profile(&mut self, display_rate: f64) {
+        if self.high_performance {
+            self.battery_saver = false;
+            self.ultra_battery_saver = false;
+            self.vsync = false;
+            self.frame_pacing = false;
+            self.frame_generation = false;
+            self.fps_limit = None;
+            return;
+        }
+        if !self.ultra_battery_saver {
+            return;
+        }
+        self.battery_saver = true;
+        self.fps_limit = Some(self.effective_fps_limit(display_rate));
+        self.frame_generation = false;
+        self.anisotropic_filtering = 1;
+        self.texture_upscaler = 1;
+        self.anti_aliasing = 1;
+        self.memory_management = MemoryManagement::Light;
+    }
 }
 
 /// Try to get app-specific options from a file.
@@ -1002,6 +1078,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn high_performance_disables_frame_throttling() {
+        let mut options = Options::default();
+        options.parse_argument("--high-performance").unwrap();
+        assert!(options.high_performance);
+        options.frame_pacing = true;
+        options.vsync = true;
+        options.fps_limit = Some(30.0);
+        options.apply_power_profile(60.0);
+        assert!(!options.frame_pacing_enabled());
+        assert!(!options.vsync);
+        assert_eq!(options.fps_limit, None);
+    }
+
+    #[test]
+    fn force_max_clocks_implies_high_performance() {
+        let mut options = Options::default();
+        options.parse_argument("--force-max-clocks").unwrap();
+        assert!(options.high_performance);
+        assert!(options.force_max_clocks);
+    }
+
+    #[test]
+    fn interpreter_is_the_arm64_default() {
+        assert_eq!(Options::default().arm64_backend, Arm64Backend::Interpreter);
+    }
+
+    #[test]
     fn parses_render_rotation_values_without_changing_orientation() {
         let values = [
             ("default", RenderRotation::Default),
@@ -1062,5 +1165,97 @@ mod tests {
             .parse_argument("--disable-low-audio-quality")
             .unwrap();
         assert!(!options.low_audio_quality);
+    }
+
+    #[test]
+    fn fullscreen_stretched_is_presentation_only() {
+        let mut options = Options::default();
+        assert!(!options.fullscreen_stretched);
+        options.parse_argument("--fullscreen-stretched").unwrap();
+        assert!(options.fullscreen);
+        assert!(options.fullscreen_stretched);
+        options
+            .parse_argument("--disable-fullscreen-stretched")
+            .unwrap();
+        assert!(!options.fullscreen_stretched);
+    }
+
+    #[test]
+    fn metal_translator_defaults_to_the_arm64_compatibility_path() {
+        assert_eq!(
+            Options::default().metal_translator,
+            cfg!(target_arch = "aarch64")
+        );
+    }
+
+    #[test]
+    fn ultra_battery_saver_caps_fps_and_enables_pacing() {
+        let mut options = Options::default();
+        assert!(!options.ultra_battery_saver);
+        options.parse_argument("--ultra-battery-saver").unwrap();
+        assert!(options.ultra_battery_saver);
+        assert!(options.battery_saver);
+        assert!(options.frame_pacing_enabled());
+        assert_eq!(options.effective_fps_limit(120.0), 10.0);
+        options
+            .parse_argument("--disable-ultra-battery-saver")
+            .unwrap();
+        assert!(!options.ultra_battery_saver);
+        assert_eq!(options.effective_fps_limit(120.0), 24.0);
+    }
+
+    #[test]
+    fn vsync_caps_fps_to_display_rate() {
+        let mut options = Options::default();
+        options.vsync = true;
+        options.fps_limit = Some(120.0);
+        assert_eq!(options.effective_fps_limit(60.0), 60.0);
+    }
+
+    #[test]
+    fn ultra_battery_saver_enforces_low_power_profile() {
+        let mut options = Options::default();
+        options.frame_generation = true;
+        options.anisotropic_filtering = 16;
+        options.texture_upscaler = 4;
+        options.anti_aliasing = 8;
+        options.memory_management = MemoryManagement::Aggressive;
+        options.ultra_battery_saver = true;
+        options.apply_power_profile(120.0);
+        assert_eq!(options.fps_limit, Some(10.0));
+        assert!(options.battery_saver);
+        assert!(!options.frame_generation);
+        assert_eq!(options.anisotropic_filtering, 1);
+        assert_eq!(options.texture_upscaler, 1);
+        assert_eq!(options.anti_aliasing, 1);
+        assert_eq!(options.memory_management, MemoryManagement::Light);
+    }
+
+    #[test]
+    fn default_graphics_api_does_not_enable_a_translator() {
+        let options = Options::default();
+        assert_eq!(options.graphics_api, GraphicsApi::Default);
+        assert!(!options.metal_translator);
+    }
+
+    #[test]
+    fn ultra_battery_saver_caps_fps_and_disables_optional_work() {
+        let mut options = Options::default();
+        options.frame_generation = true;
+        options.anisotropic_filtering = 16;
+        options.texture_upscaler = 4;
+        options.anti_aliasing = 8;
+        options.memory_management = MemoryManagement::Aggressive;
+        options.parse_argument("--ultra-battery-saver").unwrap();
+        options.apply_power_profile(120.0);
+
+        assert!(options.ultra_battery_saver);
+        assert!(options.battery_saver);
+        assert_eq!(options.effective_fps_limit(120.0), 10.0);
+        assert!(!options.frame_generation);
+        assert_eq!(options.anisotropic_filtering, 1);
+        assert_eq!(options.texture_upscaler, 1);
+        assert_eq!(options.anti_aliasing, 1);
+        assert_eq!(options.memory_management, MemoryManagement::Light);
     }
 }

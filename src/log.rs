@@ -13,6 +13,19 @@ static FILE_LOGGING_ENABLED: AtomicBool = AtomicBool::new(true);
 static LOG_LINES: AtomicUsize = AtomicUsize::new(0);
 const LOG_FLUSH_INTERVAL: usize = 64;
 
+fn should_flush_immediately(line: &str) -> bool {
+    [
+        "Warning:",
+        "Error:",
+        "Panic",
+        "GLES ERROR",
+        "AudioQueue underrun",
+        "audio underrun",
+    ]
+    .iter()
+    .any(|marker| line.contains(marker))
+}
+
 pub fn set_file_logging(enabled: bool) {
     FILE_LOGGING_ENABLED.store(enabled, Ordering::Relaxed);
     if !enabled {
@@ -31,7 +44,7 @@ pub fn append_log_line(line: &str) {
         let _ = std::io::Write::write_all(&mut *log_file, line.as_bytes());
         let _ = std::io::Write::write_all(&mut *log_file, b"\n");
         let count = LOG_LINES.fetch_add(1, Ordering::Relaxed) + 1;
-        if count % LOG_FLUSH_INTERVAL == 0 {
+        if count % LOG_FLUSH_INTERVAL == 0 || should_flush_immediately(line) {
             let _ = std::io::Write::flush(&mut *log_file);
         }
     }

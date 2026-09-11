@@ -8,6 +8,13 @@ View options:
         in use, the result may be a bit blurry. An internal resolution larger
         than your screen's is possible, in which case the output is downscaled.
 
+    --fullscreen-stretched / --disable-fullscreen-stretched
+        Fill the entire host display with the rendered image without preserving
+        the emulated device aspect ratio. This is a presentation-only choice:
+        it does not change the guest's orientation, screen size, or touch model.
+        When enabled, final render rotations and axis mirrors are bypassed so
+        the source image is stretched directly into the display.
+
     --landscape-left
     --landscape-right
     --upside-down
@@ -103,6 +110,11 @@ Device options:
     --force-32-bit
         Prefer the 32-bit ARM loader when the selected application includes a
         compatible ARM32 slice. An ARM64-only executable cannot be run as 32-bit.
+
+    --metal-translator / --disable-metal-translator
+        Enable the ARM64 GLES translator path. It is enabled by default on
+        ARM64 builds, where it is the compatibility-first rendering path, and
+        can still be disabled to use direct GLES2 compatibility instead.
 
 
 Game controller options:
@@ -382,12 +394,33 @@ Other options:
         Disabling it allows the emulator to run the guest as fast as possible,
         but may increase CPU/GPU usage and produce uneven presentation.
 
+    --battery-saver / --disable-battery-saver
+        Cap rendering at 24 FPS and reduce unnecessary wakeups.
+
+    --ultra-battery-saver / --disable-ultra-battery-saver
+        Use the strict low-power profile: cap rendering at 10 FPS, disable frame
+        generation, and force optional graphics and memory work to their lowest
+        settings. This reduces host CPU/GPU/RAM pressure but cannot impose an
+        operating-system-level percentage cap on hardware resources.
+
     --frame-generation
         Enable display-frame generation up to the host display refresh rate.
         Off by default; this changes presentation only, not guest game logic.
 
     --disable-frame-generation
         Disable display-frame generation.
+
+    --high-performance / --disable-high-performance
+        Disable emulator-side pacing, vsync, and battery caps so the host can
+        run the renderer and guest as fast as practical. This is a scheduling
+        and pacing request; it cannot force an Android device to use 100% CPU
+        or GPU clocks.
+
+    --force-max-clocks / --disable-force-max-clocks
+        Request the host's best-effort maximum-performance hint. On Android the
+        setting is passed to the host performance layer where available, but
+        clock governors remain controlled by the operating system and device.
+        Enabling it also enables high-performance mode.
 
     --rtcs / --disable-rtcs
         Enable or disable the safe visual-only accelerating corruption effect.
